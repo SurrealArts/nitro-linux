@@ -1,0 +1,22 @@
+#!/bin/bash
+# nitro-apply: apply /etc/nitro.conf to sysfs.
+# No-op if module/config missing.
+set -u
+BASE=/sys/devices/platform/nitro
+CONF=/etc/nitro.conf
+[ -d "$BASE" ] || exit 0
+[ -f "$CONF" ] || exit 0
+while read -r kind a b c d e f g; do
+  case "$kind" in
+    ""|"#"*) continue ;;
+    static)
+      echo "$a $b $c $d" > "$BASE/kbd_static" 2>/dev/null || echo "nitro-apply: static $a $b $c $d failed" >&2 ;;
+    dyn)
+      echo "$a $b $c $d $e $f $g" > "$BASE/kbd_dynamic" 2>/dev/null || echo "nitro-apply: dyn failed" >&2 ;;
+    fan)
+      echo "$b" > "$BASE/fan_$a" 2>/dev/null || echo "nitro-apply: fan $a $b failed" >&2 ;;
+    profile)
+      echo "$a" > /sys/class/platform-profile/platform-profile-0/profile 2>/dev/null || echo "nitro-apply: profile $a failed" >&2 ;;
+    *) echo "nitro-apply: unknown line: $kind $a $b $c $d $e $f $g" >&2 ;;
+  esac
+done < "$CONF"

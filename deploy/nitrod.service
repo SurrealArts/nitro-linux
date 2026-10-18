@@ -1,0 +1,13 @@
+[Unit]
+Description=nitro daemon
+After=systemd-modules-load.service nitro-apply.service
+ConditionPathExists=/sys/devices/platform/nitro
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nitrod
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply /etc/nitro.conf (Acer Nitro AN515-57 keyboard/fan)
+After=systemd-modules-load.service
+ConditionPathExists=/sys/devices/platform/nitro
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nitro-apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
