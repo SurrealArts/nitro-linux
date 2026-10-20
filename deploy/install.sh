@@ -55,23 +55,27 @@ install -m644 deploy/nitro-modules.conf /etc/modules-load.d/nitro.conf
 install -m755 deploy/nitro-apply /usr/local/bin/nitro-apply
 install -m644 deploy/nitro-apply.service /etc/systemd/system/nitro-apply.service
 install -m755 daemon/nitrod.py /usr/local/bin/nitrod
-install -m755 tui/nitro-tui.py /usr/local/bin/nitro-tui
+install -m755 tui/nitro-linux.py /usr/local/bin/nitro-linux
+install -m755 tools/nitro.py /usr/local/bin/nitro
+rm -f /usr/local/bin/nitro-tui  # remove the pre-rename command
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then
-  sed -i "s/^VERSION = .*/VERSION = \"$(tr -d '[:space:]' < "$VFILE")\"/" /usr/local/bin/nitro-tui
+  sed -i "s/^VERSION = .*/VERSION = \"$(tr -d '[:space:]' < "$VFILE")\"/" /usr/local/bin/nitro-linux
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
 mkdir -p /var/lib/nitro
 systemctl daemon-reload
 systemctl enable nitro-apply.service nitrod.service
-systemctl restart nitrod.service
+systemctl stop nitrod.service 2>/dev/null || true
 echo "[*] load"
 rmmod nitro 2>/dev/null || true
 sleep 1
 modprobe led-class-multicolor
 modprobe nitro || { dmesg | tail -5; echo "[!] modprobe failed. If Secure Boot is on, the DKMS key must be enrolled (see Secure Boot below)."; exit 1; }
 sleep 1
+echo "[*] apply /etc/nitro.conf"
+systemctl restart nitro-apply.service 2>/dev/null || true
 systemctl restart nitrod.service 2>/dev/null || true
 echo "[*] rebuild initramfs (bake current nitro, purge stale copies)"
 if command -v dracut-rebuild >/dev/null 2>&1; then
@@ -84,4 +88,4 @@ dkms status | grep nitro || true
 ls /sys/devices/platform/nitro/ | tr '\n' ' '; echo
 sensors 2>/dev/null | grep -A4 nitro || true
 ls /sys/class/leds/ | grep nitro || true
-echo "[*] done. Edit /etc/nitro.conf then: sudo systemctl restart nitro-apply"
+echo "[*] done. 'nitro-linux' panel and 'nitro' CLI are ready."

@@ -66,9 +66,29 @@ def set_dyn(mode, speed, brightness, direction, r, g, b):
     (BASE / "kbd_dynamic").write_text(f"{mode} {speed} {brightness} {direction} {r} {g} {b}")
     print(f"kbd_dynamic: {read('kbd_dynamic')}")
 
+def usage():
+    prog = pathlib.Path(sys.argv[0]).name
+    print("usage:")
+    print(f"    {prog} [status]")
+    print("               | rgb <zone 1|2|4|8> <r> <g> <b>")
+    print("               | fan <cpu|gpu> <0-100>")
+    print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
+    print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
+    print("modes:")
+    print("    1 breath")
+    print("    2 neon")
+    print("    3 wave")
+    print("    4 shifting")
+    print("    5 zoom")
+    print("Note:")
+    print("    sysfs is root-owned, run with sudo for writes,")
+    print(f"    e.g. sudo {prog} rgb 1 255 0 0")
+
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] in ("status",):
         status()
+    elif sys.argv[1] in ("help", "-h", "--help"):
+        usage()
     elif sys.argv[1] == "rgb" and len(sys.argv) == 6:
         set_static(*sys.argv[2:6])
     elif sys.argv[1] == "fan" and len(sys.argv) == 4:
@@ -80,18 +100,4 @@ if __name__ == "__main__":
         pathlib.Path("/sys/class/platform-profile/platform-profile-0/profile").write_text(sys.argv[2])
         print(f"platform_profile: {open('/sys/class/platform-profile/platform-profile-0/profile').read().strip()}")
     else:
-        print("usage:")
-        print("    nitro.py [status]")
-        print("               | rgb <zone 1|2|4|8> <r> <g> <b>")
-        print("               | fan <cpu|gpu> <0-100>")
-        print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
-        print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
-        print("modes:")
-        print("    1 breath")
-        print("    2 neon")
-        print("    3 wave")
-        print("    4 shifting")
-        print("    5 zoom")
-        print("Note:")
-        print("    sysfs is root-owned, run with sudo for writes,")
-        print("    e.g. sudo python tools/nitro.py rgb 1 255 0 0")
+        usage()

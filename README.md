@@ -1,28 +1,48 @@
 # nitro-linux
 
-Kernel driver, daemon, and btop-style TUI for the Acer Nitro AN515-57:
-keyboard backlight effects, fan monitoring, thermal policies. Coexists with
-in-tree `acer-wmi`.
+Kernel driver, daemon, and btop-style TUI for the Acer Nitro AN515-57: keyboard backlight effects, fan monitoring, thermal policies. Coexists with in-tree `acer-wmi`.
 
 Target: AN515-57 / Scala_TLS, BIOS V1.22
-(Other models to be reviewed)
+
+> Plans for other AN515 models are still in planning stage.
 
 Minimum terminal size: **120x47**
 
-![Dashboard of nitro-tui. Image shows Fan Control and Fan Monitor (CPU/GPU fan speed) on top; Power Plan, Thermal (CPU/GPU temps), and Keyboard (controls) on the bottom](docs/screenshot-tui.png)
+![Dashboard of nitro-linux. Image shows Fan Control and Fan Monitor (CPU/GPU fan speed) on top; Power Plan, Thermal (CPU/GPU temps), and Keyboard (controls) on the bottom](docs/screenshot-tui.png)
 
 ## Install
 
 ```bash
-sudo bash deploy/install.sh   # DKMS driver + nitrod + nitro-tui + services
-nitro-tui                   # dashboard
+sudo bash deploy/install.sh
 ```
 
-Edit defaults in `/etc/nitro.conf`, apply with
-`sudo systemctl restart nitro-apply`
+This sets up the kernel driver, the `nitrod` background service, the `nitro-linux` control panel, the `nitro` command-line tool, and the system services. The installer applies `/etc/nitro.conf` and starts the daemon, so there is no post-install setup.
+
+Daemon and `/etc/nitro.conf` settings are preserved in-between installs, reinstalls, uninstalls.
+
+Open the panel with:
+
+```bash
+nitro-linux
+```
 
 Uninstall:
 `sudo bash deploy/uninstall.sh`
+
+## Customize
+
+There are a few ways to change settings:
+
+- **Dashboard**: run `nitro-linux`.
+    - Everything is on one screen and clickable; press `?` for help. The full key list is under [Use](#use).
+- **Defaults**: edit `/etc/nitro.conf`, then run `sudo systemctl restart nitro-apply`.
+    - The comments at the top of that file show the syntax for keyboard lighting, fan duty, and power profile. These values are applied during install and at boot. At boot, the daemon's saved settings take priority.
+    - See [nitro.conf](deploy/nitro.conf) for reference.
+- **CLI**: run `nitro help` for commands and syntax.
+    - See [nitro.py](tools/nitro.py) for reference.
+- **Directly**: Read or write the files under `/sys/devices/platform/nitro/` as root.
+    - The driver prints the available file names in the kernel log when it loads (`sudo dmesg | grep nitro`).
+    - See [REVERSE](docs/REVERSE.md) for the values.
 
 ## Secure Boot
 
@@ -60,7 +80,7 @@ sudo modprobe led-class-multicolor && sudo insmod src/nitro.ko
 - `sudo` (you _know_ you are installing a daemon)
 - `mokutil` + `openssl` (to enroll a DKMS key for secure boot systems)
 
-**Runtime (`nitrod`, `nitro-tui`, `tools/nitro.py`)**
+**Runtime (`nitrod`, `nitro-linux` TUI, `nitro` CLI)**
 
 - Python 3.8+
     - `curses`, `sqlite3`, `socket`, `json`, `subprocess`, `threading`, `glob`, `re`
@@ -116,7 +136,7 @@ One screen, every control clickable and showing its key. Minimum size 120x47.
 - `q`/`Esc`/`Ctrl+q` close UI
 - `Q` stop daemon
 
-CLI: `sudo python tools/nitro.py status` (also `rgb`, `fan`, `dyn`, `profile`)
+CLI: `sudo nitro status` (also `rgb`, `fan`, `dyn`, `profile`)
 
 Sensors: `nitro-isa-0000`
 
@@ -144,11 +164,12 @@ which may be restricted depending on `kernel.dmesg_restrict`.
 This also dumps recent `dmesg nitro` lines:
 
 ```bash
-sudo python tools/nitro.py status
+sudo nitro status
 ```
 
-`nitrod` and `nitro-tui` have no userspace logging.
+`nitrod` and `nitro-linux` have no userspace logging.
 
 ## TODO
 
+- [ ] PKGBUILD
 - [ ] CoolBoost

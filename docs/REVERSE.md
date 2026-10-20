@@ -42,4 +42,4 @@ Notable findings:
 
 - **CoolBoost**: not implemented. Acer's NitroSense exposes a CoolBoost™ toggle on the Fan Control panel; purpose/mapping unknown (no sub-command identified in the table above). Plan: reverse-engineer via WMI/EC probing (risky, needs the user present). No code shipped.
 - **CPU+GPU temp combo**: done — the thermal pane shows CPU (package, coretemp hwmon) and GPU (discrete NVIDIA, nvidia-smi) temps; model names read live from `/proc/cpuinfo` + `nvidia-smi` (short forms). The older "cpu package + ec board" combo is replaced.
-- **Logs**: the kernel driver logs via printk (`pr_info`/`pr_err`/`pr_warn`) → `dmesg` / `journalctl -k` (also dumped by `sudo python tools/nitro.py status`). `nitrod` and `nitro-tui` are silent (no userspace logging).
+- **Logs**: the kernel driver logs via printk (`pr_info`/`pr_err`/`pr_warn`) → `dmesg` / `journalctl -k` (also dumped by `sudo nitro status`). `nitrod` and `nitro-linux` are silent (no userspace logging).

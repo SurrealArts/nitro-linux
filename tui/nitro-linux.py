@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""nitro-tui - single-screen control panel for the nitro daemon.
+"""nitro-linux - single-screen control panel for the nitro daemon.
 
 Interactive TUI.
 
