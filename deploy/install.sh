@@ -2,6 +2,12 @@
 set -e
 cd "$(dirname "$0")/.."
 
+if pacman -Qq nitro-linux >/dev/null 2>&1; then
+  echo "[!] nitro-linux is installed as a package."
+  echo "    Use pacman to upgrade, or remove the package before a source install."
+  exit 1
+fi
+
 preflight_sb() {
   # For Secure Boot systems
   local efivar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
