@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nitro-linux package repository</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        max-width: 48rem;
+        margin: 3rem auto;
+        padding: 0 1.25rem;
+        line-height: 1.5;
+      }
+      h1,
+      h2 {
+        line-height: 1.2;
+      }
+      code,
+      pre {
+        font-family: ui-monospace, monospace;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 1rem;
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+      }
+      a {
+        color: #58a6ff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>nitro-linux package repository</h1>
+    <p>Acer Nitro AN515-57 kernel driver, daemon, and TUI.</p>
+
+    <pre><code>[nitro-linux]
+SigLevel = Required DatabaseOptional
+Server = https://surrealarts.github.io/nitro-linux/$arch</code></pre>
+
+    <h2>Key</h2>
+    <pre><code>7EA2338784E083123CC077F2E29A80B4FDD576B1</code></pre>
+
+    <p><code>hkps://keyserver.ubuntu.com</code></p>
+
+    <pre><code>sudo pacman -Syu nitro-linux</code></pre>
+    <p><a href="https://github.com/SurrealArts/nitro-linux">Source and documentation</a></p>
+  </body>
+</html>

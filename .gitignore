@@ -15,5 +15,8 @@ windows-captures/
 local-test/
 *.tar.gz
 *.pkg.tar.zst
+*.pkg.tar.zst.sig
 pkg/
+packaging/src/
+packaging/nitro-linux/
 

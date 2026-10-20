@@ -1,0 +1,44 @@
+# Maintainer: SurrealArts <heiwamakina@gmail.com>
+pkgname=nitro-linux
+pkgver=2.0.0
+pkgrel=1
+pkgdesc='Acer Nitro AN515-57 kernel driver, daemon, and TUI'
+arch=('x86_64')
+url='https://github.com/SurrealArts/nitro-linux'
+license=('GPL-3.0-or-later')
+depends=('python' 'dkms' 'systemd')
+makedepends=('git')
+optdepends=(
+  'linux-headers: build the module for the default kernel'
+  'linux-lts-headers: build the module for the LTS kernel'
+  'nvidia-utils: GPU temperature and model name in the thermal pane'
+)
+install=nitro-linux.install
+source=("$pkgname::git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+package() {
+  local src="$srcdir/$pkgname"
+
+  install -Dm755 "$src/tools/nitro.py" "$pkgdir/usr/bin/nitro"
+  install -Dm755 "$src/tui/nitro-linux.py" "$pkgdir/usr/bin/nitro-linux"
+  install -Dm755 "$src/daemon/nitrod.py" "$pkgdir/usr/bin/nitrod"
+  install -Dm755 "$src/deploy/nitro-apply" "$pkgdir/usr/bin/nitro-apply"
+
+  install -Dm644 "$src/deploy/nitro-modules.conf" "$pkgdir/etc/modules-load.d/nitro.conf"
+  install -Dm644 "$src/deploy/nitro.conf" "$pkgdir/usr/share/nitro-linux/nitro.conf"
+
+  install -Dm644 "$src/deploy/nitrod.service" "$pkgdir/usr/lib/systemd/system/nitrod.service"
+  install -Dm644 "$src/deploy/nitro-apply.service" "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
+  sed -i 's#/usr/local/bin/#/usr/bin/#g' \
+    "$pkgdir/usr/lib/systemd/system/nitrod.service" \
+    "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
+
+  install -Dm644 "$src/dkms.conf" "$pkgdir/usr/src/nitro-$pkgver/dkms.conf"
+  install -Dm644 "$src/Makefile" "$pkgdir/usr/src/nitro-$pkgver/Makefile"
+  install -Dm644 "$src/src/nitro.c" "$pkgdir/usr/src/nitro-$pkgver/src/nitro.c"
+
+  install -Dm644 "$src/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  install -dm755 "$pkgdir/var/lib/nitro"
+}

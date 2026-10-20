@@ -1,0 +1,47 @@
+_install_config() {
+  if [ ! -e /etc/nitro.conf ]; then
+    install -Dm644 /usr/share/nitro-linux/nitro.conf /etc/nitro.conf
+  fi
+}
+
+_check_source_install() {
+  if [ -e /usr/local/bin/nitrod ] ||
+     [ -e /usr/local/bin/nitro-linux ] ||
+     [ -e /etc/systemd/system/nitrod.service ]; then
+    echo ":: WARNING: a source install appears to be present."
+    echo ":: Remove it with deploy/uninstall.sh before using the package."
+  fi
+}
+
+post_install() {
+  _install_config
+  _check_source_install
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable nitro-apply.service nitrod.service
+  fi
+  echo ":: Reboot once to load the nitro kernel module."
+}
+
+post_upgrade() {
+  _install_config
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable nitro-apply.service nitrod.service
+    systemctl try-restart nitro-apply.service 2>/dev/null || true
+    systemctl try-restart nitrod.service 2>/dev/null || true
+  fi
+}
+
+pre_remove() {
+  if [ -d /run/systemd/system ]; then
+    systemctl disable --now nitrod.service nitro-apply.service 2>/dev/null || true
+  fi
+}
+
+post_remove() {
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+  fi
+  echo ":: /etc/nitro.conf and /var/lib/nitro were kept."
+}
