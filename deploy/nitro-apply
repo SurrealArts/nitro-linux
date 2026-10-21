@@ -23,7 +23,7 @@ while read -r kind a b c d e f g; do
       esac
       fanmode=$(cat "$BASE/fan_mode" 2>/dev/null || true)
       if [ "$fanmode" = "cpu=auto gpu=auto" ]; then
-        echo "$cb" > "$BASE/coolboost" 2>/dev/null || echo "nitro-apply: coolboost $a failed (driver update required?)" >&2
+        echo "$cb" > "$BASE/coolboost" 2>/dev/null || echo "nitro-apply: coolboost $a failed (driver 2.1.0?)" >&2
       else
         echo "nitro-apply: coolboost skipped (fans must be auto, have '$fanmode')" >&2
       fi ;;

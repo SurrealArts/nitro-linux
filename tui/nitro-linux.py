@@ -31,7 +31,7 @@ import sys
 import time
 from collections import deque
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 def project_version():
@@ -542,7 +542,7 @@ class UI:
             return
         on = self.coolboost_live()
         if on is None:
-            self.msg = "!! CoolBoost unavailable (driver update required)"
+            self.msg = "!! CoolBoost unavailable (driver 2.1.0 required)"
             self.msg_time = time.time()
             return
         self.send(

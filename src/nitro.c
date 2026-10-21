@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * nitro - Acer Nitro AN515-57 EC/WMI driver v2.0.0
+ * nitro - Acer Nitro AN515-57 EC/WMI driver v2.1.0
  * (support for other models are to be added in later updates)
  *
  * Targets (current): Acer Nitro AN515-57 (Scala_TLS), BIOS V1.22.
@@ -29,7 +29,7 @@
 MODULE_AUTHOR("SurrealArts");
 MODULE_DESCRIPTION("Acer Nitro AN515-57 WMI driver (hwmon + leds + platform_profile)");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.0.0");
+MODULE_VERSION("2.1.0");
 
 #define NITRO_WMI_GUID "7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
 #define NITRO_EC_COOLBOOST 0x10
@@ -1368,7 +1368,7 @@ static int __init nitro_init(void)
 	struct device *pp;
 	int ret;
 
-	pr_info("v2.0.0 loading\n");
+	pr_info("v2.1.0 loading\n");
 
 	if (!dmi_check_system(nitro_dmi)) {
 		pr_err("DMI is not Acer Nitro AN515-57, refusing\n");
