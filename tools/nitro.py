@@ -1,14 +1,33 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-import pathlib, subprocess, sys
+import json, os, pathlib, socket, subprocess, sys
 
 BASE = pathlib.Path("/sys/devices/platform/nitro")
+SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
 
 def read(name):
     try:
         return (BASE / name).read_text().strip()
     except Exception as e:
         return f"MISSING ({e})"
+
+def daemon_set(key, value):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(3)
+    try:
+        s.connect(SOCK)
+        s.sendall((json.dumps({"cmd": "set", "key": key, "value": value}) + "\n").encode())
+        data = b""
+        while not data.endswith(b"\n"):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        return json.loads(data.decode())
+    except (OSError, ValueError):
+        return None
+    finally:
+        s.close()
 
 def status():
     for name in [
@@ -20,6 +39,7 @@ def status():
         "kbd_static",
         "kbd_dynamic",
         "kbd_zone1",
+        "coolboost",
         "ec_cpu_temp"]:
         print(f"{name}: {read(name)}")
     for p in ["/sys/class/platform-profile/platform-profile-0/profile"]:
@@ -53,6 +73,24 @@ def set_fan(which, duty):
     (BASE / f"fan_{which}").write_text(str(duty))
     print(f"fan_{which}: {read(f'fan_{which}')}")
 
+def set_coolboost(value):
+    v = str(value).lower()
+    assert v in ("on", "off", "1", "0"), "coolboost on|off"
+    on = v in ("on", "1")
+    # Keep the daemon's desired state in sync when it is running.  The daemon
+    # is the source of truth for reapply/restart; fall back to raw sysfs when
+    # it is not available.
+    r = daemon_set("coolboost", on)
+    if r is not None:
+        if not r.get("ok"):
+            raise SystemExit(f"coolboost: {r.get('err', 'failed')}")
+    else:
+        try:
+            (BASE / "coolboost").write_text("1" if on else "0")
+        except OSError as e:
+            raise SystemExit(f"coolboost: {e.strerror or e}")
+    print(f"coolboost: {read('coolboost')}")
+
 def set_dyn(mode, speed, brightness, direction, r, g, b):
     for name, v, lo, hi in [
         ("mode", int(mode), 1, 5),
@@ -72,6 +110,7 @@ def usage():
     print(f"    {prog} [status]")
     print("               | rgb <zone 1|2|4|8> <r> <g> <b>")
     print("               | fan <cpu|gpu> <0-100>")
+    print("               | coolboost <on|off>          (fans must be auto)")
     print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
     print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
     print("modes:")
@@ -93,6 +132,8 @@ if __name__ == "__main__":
         set_static(*sys.argv[2:6])
     elif sys.argv[1] == "fan" and len(sys.argv) == 4:
         set_fan(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "coolboost" and len(sys.argv) == 3:
+        set_coolboost(sys.argv[2])
     elif sys.argv[1] == "dyn" and len(sys.argv) == 9:
         set_dyn(*sys.argv[2:9])
     elif sys.argv[1] == "profile" and len(sys.argv) == 3:

@@ -47,12 +47,13 @@ sudo bash deploy/uninstall.sh
 `nitro-linux` opens the TUI. `nitro help` lists CLI commands. `?` shows the full key map.
 
 - Fans: `A` auto, `S` max, `D` custom; `.`/`/` and `;`/`'` adjust CPU/GPU duty.
+- CoolBoost: `i` toggles it in Auto only; retained while in Max/Custom.
 - Power: `Z` `X` `C` `V` `B`; `o`/`p` switch AC/battery.
 - Thermal: `F` toggles °C/°F.
 - Keyboard: `[`/`]` static/dynamic; `1`-`4` zones; `1`-`5` effects; `Enter`/`#` color picker; `l`/`L` brightness; `R` reapply.
 - `-`/`+` refresh; `q` quit; `Q` stop daemon.
 
-Config: `/etc/nitro.conf` for defaults (`sudo systemctl restart nitro-apply`), `/sys/devices/platform/nitro/` for direct sysfs, `docs/REVERSE.md` for the EC/WMI interface.
+Config: `/etc/nitro.conf` for defaults (`sudo systemctl restart nitro-apply`), `/sys/devices/platform/nitro/` for direct sysfs, `docs/REVERSE.md` for the EC/WMI interface. Optional config line: `coolboost on|off` (applied only while both fans are Auto). CLI: `sudo nitro coolboost on|off`.
 
 Sensors: `nitro-isa-0000`. LEDs: `/sys/class/leds/nitro:rgb:zone*`. Profile: `/sys/class/platform-profile/platform-profile-0/profile`.
 

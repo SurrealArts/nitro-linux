@@ -7,7 +7,7 @@
  * (entry to remove soon)
  * 
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
- * Restores initial fan/RGB/FTBL on unload. See docs/REVERSE.md.
+ * Restores initial fan/RGB/FTBL/CoolBoost on unload. See docs/REVERSE.md.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -32,6 +32,7 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION("2.0.0");
 
 #define NITRO_WMI_GUID "7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
+#define NITRO_EC_COOLBOOST 0x10
 
 #define NITRO_BH_SET_LED			0x02
 #define NITRO_BH_SYSINFO			0x05
@@ -78,6 +79,8 @@ static bool have_fan_modes;
 static u8 saved_zone[4][3];
 static u8 saved_dyn[16];
 static u8 saved_ftbl = NITRO_FTBL_BALANCED;
+static u8 saved_coolboost;
+static bool have_coolboost;
 static bool have_saved;
 static u8 cur_zone[4][3];
 
@@ -272,6 +275,47 @@ static int nitro_get_fan_behavior(u8 bitmap, u8 *cpu_mode, u8 *gpu_mode)
 		return -EIO;
 	*cpu_mode = out[1] & 0x3;
 	*gpu_mode = (out[1] >> 6) & 0x3;
+	return 0;
+}
+
+static int nitro_fans_auto(void)
+{
+	u8 cpu, gpu;
+	int ret;
+
+	ret = nitro_get_fan_behavior(NITRO_FANBIT_BOTH, &cpu, &gpu);
+	if (ret)
+		return ret;
+	return (cpu == NITRO_FAN_MODE_AUTO &&
+		gpu == NITRO_FAN_MODE_AUTO) ? 0 : -EPERM;
+}
+
+static int nitro_get_coolboost(u8 *value)
+{
+	u8 v;
+	int ret = ec_read(NITRO_EC_COOLBOOST, &v);
+
+	if (ret)
+		return ret;
+	*value = v & 1;
+	return 0;
+}
+
+static int nitro_set_coolboost(u8 value)
+{
+	u8 check;
+	int ret;
+
+	if (value > 1)
+		return -ERANGE;
+	ret = ec_write(NITRO_EC_COOLBOOST, value);
+	if (ret)
+		return ret;
+	ret = ec_read(NITRO_EC_COOLBOOST, &check);
+	if (ret)
+		return ret;
+	if ((check & 1) != value)
+		return -EIO;
 	return 0;
 }
 
@@ -581,6 +625,57 @@ out:
 	return count;
 }
 static DEVICE_ATTR_RW(fan_mode);
+
+static ssize_t coolboost_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	u8 value;
+	int ret;
+
+	mutex_lock(&nitro_lock);
+	ret = nitro_get_coolboost(&value);
+	mutex_unlock(&nitro_lock);
+	if (ret)
+		return ret;
+	return sysfs_emit(buf, "%u\n", value);
+}
+
+static ssize_t coolboost_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	unsigned long v;
+	bool on;
+	int ret;
+
+	if (sysfs_streq(buf, "on")) {
+		on = true;
+	} else if (sysfs_streq(buf, "off")) {
+		on = false;
+	} else {
+		ret = kstrtoul(buf, 10, &v);
+		if (ret)
+			return ret;
+		if (v > 1)
+			return -ERANGE;
+		on = v;
+	}
+
+	mutex_lock(&nitro_lock);
+	ret = nitro_fans_auto();
+	if (!ret)
+		ret = nitro_set_coolboost(on ? 1 : 0);
+	mutex_unlock(&nitro_lock);
+	if (ret)
+		return ret;
+	pr_info("CoolBoost %s\n", on ? "on" : "off");
+	return count;
+}
+static DEVICE_ATTR_RW(coolboost);
 
 static ssize_t ftbl_show(
 	struct device *dev,
@@ -1208,6 +1303,7 @@ static struct attribute *nitro_attrs[] = {
 	&dev_attr_fan_cpu.attr,
 	&dev_attr_fan_gpu.attr,
 	&dev_attr_fan_mode.attr,
+	&dev_attr_coolboost.attr,
 	&dev_attr_ftbl.attr,
 	&dev_attr_tkst.attr,
 	&dev_attr_opms.attr,
@@ -1245,6 +1341,10 @@ static void nitro_save_initial(void)
 	if (!nitro_get_fan_behavior(
 		NITRO_FANBIT_BOTH, &saved_fan_cpu_mode, &saved_fan_gpu_mode))
 		have_fan_modes = true;
+	if (!nitro_get_coolboost(&d)) {
+		saved_coolboost = d;
+		have_coolboost = true;
+	}
 	for (i = 0; i < 4; i++) {
 		if (nitro_get_static(
 			zones[i], &saved_zone[i][0],
@@ -1291,7 +1391,9 @@ static int __init nitro_init(void)
 
 	mutex_lock(&nitro_lock);
 	nitro_save_initial();
-	pr_info("saved fan cpu=%u gpu=%u\n", saved_fan_cpu, saved_fan_gpu);
+	pr_info("saved fan cpu=%u gpu=%u coolboost=%u%s\n",
+		saved_fan_cpu, saved_fan_gpu, saved_coolboost,
+		have_coolboost ? "" : " (read failed)");
 	if (!nitro_get_fan(NITRO_FAN_CPU, &duty))
 		pr_info("EC CPU fan duty=%u\n", duty);
 	if (!nitro_get_fan(NITRO_FAN_GPU, &duty))
@@ -1336,7 +1438,7 @@ static int __init nitro_init(void)
 		goto err_hwmon;
 	}
 
-	pr_info("sysfs RW: fan_cpu/gpu (0-100, forces custom), fan_mode (both or cpu=/gpu=), ftbl (0-4), tkst (0/1 experimental), kbd_static, kbd_dynamic, kbd_bright, wmi_raw (0600 debug). RO: opms, kbd_zone1, ec_cpu_temp. hwmon + leds + platform_profile registered.\n");
+	pr_info("sysfs RW: fan_cpu/gpu (0-100, forces custom), fan_mode (both or cpu=/gpu=), coolboost (0/1, auto only), ftbl (0-4), tkst (0/1 experimental), kbd_static, kbd_dynamic, kbd_bright, wmi_raw (0600 debug). RO: opms, kbd_zone1, ec_cpu_temp. hwmon + leds + platform_profile registered.\n");
 	return 0;
 
 err_hwmon:
@@ -1377,7 +1479,12 @@ static void __exit nitro_exit(void)
 			nitro_set_dynamic_raw(eff);
 		}
 		nitro_set_ftbl(saved_ftbl);
-		pr_info("restored fan %u/%u ftbl 0x%02x\n", saved_fan_cpu, saved_fan_gpu, saved_ftbl);
+		if (have_coolboost &&
+			nitro_set_coolboost(saved_coolboost))
+			pr_warn("CoolBoost restore failed\n");
+		pr_info("restored fan %u/%u ftbl 0x%02x coolboost %u\n",
+			saved_fan_cpu, saved_fan_gpu, saved_ftbl,
+			have_coolboost ? saved_coolboost : 0);
 	}
 	sysfs_remove_groups(&nitro_pdev->dev.kobj, nitro_groups);
 	platform_device_unregister(nitro_pdev);

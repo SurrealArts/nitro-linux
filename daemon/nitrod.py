@@ -16,6 +16,7 @@ State layout (0.8.0)
     brightness      0-100, global (used by both static and dynamic)
     fan_cpu/fan_gpu 0-100 duty, remembered even while fans run auto/max
     fan_mode        {"cpu": "auto|max|custom", "gpu": ...}
+    coolboost       bool, retained while fans are not in auto
     profile_ac      platform profile applied while on mains power
     profile_battery platform profile applied while on battery
 """
@@ -69,6 +70,35 @@ def write(path, text):
         f.write(str(text))
 
 
+def coerce_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "on", "true", "yes"):
+            return True
+        if v in ("0", "off", "false", "no"):
+            return False
+    return None
+
+
+def parse_coolboost(value):
+    """Strict control input: bool, 0/1, or on/off."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "on"):
+            return True
+        if v in ("0", "off"):
+            return False
+    return None
+
+
 def hwmon_find(name):
     try:
         for h in sorted(os.listdir(HWMON)):
@@ -99,6 +129,7 @@ def snapshot():
     d["kbd_dynamic"] = read(f"{SYS}/kbd_dynamic")
     d["kbd_bright"] = read(f"{SYS}/kbd_bright")
     d["fan_mode"] = read(f"{SYS}/fan_mode")
+    d["coolboost"] = read(f"{SYS}/coolboost")
     d["ec_cpu_temp"] = read(f"{SYS}/ec_cpu_temp")
     d["profile"] = read(PP)
     n = hwmon_find("nitro")
@@ -138,6 +169,7 @@ def default_state():
         "fan_cpu": 50,
         "fan_gpu": 50,
         "fan_mode": {"cpu": "custom", "gpu": "custom"},
+        "coolboost": False,
         "profile_ac": "balanced",
         "profile_battery": "low-power",
     }
@@ -194,6 +226,9 @@ def migrate(raw):
         for k in ("cpu", "gpu"):
             if fm.get(k) in ("auto", "max", "custom"):
                 s["fan_mode"][k] = fm[k]
+    cb = coerce_bool(raw.get("coolboost"))
+    if cb is not None:
+        s["coolboost"] = cb
     if s.get("mode") not in ("static", "dynamic"):
         s["mode"] = "static"
     if s.get("profile_ac") not in PROFILES:
@@ -254,6 +289,9 @@ def adopt_current(s):
         k, _, v = part.partition("=")
         if k in ("cpu", "gpu") and v in ("auto", "max", "custom"):
             s["fan_mode"][k] = v
+    cb = coerce_bool(snap.get("coolboost"))
+    if cb is not None:
+        s["coolboost"] = cb
     try:
         s["brightness"] = int(snap["kbd_bright"])
     except (TypeError, ValueError):
@@ -291,6 +329,21 @@ def apply_fans(s):
         write(f"{SYS}/fan_gpu", s["fan_gpu"])
 
 
+def apply_coolboost(s):
+    """Write CoolBoost only when the desired fan mode is auto.
+
+    The driver refuses writes in max/custom; the retained value is left alone.
+    """
+    path = f"{SYS}/coolboost"
+    if not os.path.exists(path):
+        return False
+    fm = s.get("fan_mode") or {}
+    if fm.get("cpu") != "auto" or fm.get("gpu") != "auto":
+        return False
+    write(path, 1 if s.get("coolboost") else 0)
+    return True
+
+
 def apply_kbd(s):
     if s.get("mode") == "dynamic":
         write(f"{SYS}/kbd_dynamic", dyn_payload(s))
@@ -308,6 +361,7 @@ def apply_all(s):
     try:
         apply_profile(s)
         apply_fans(s)
+        apply_coolboost(s)
         apply_kbd(s)
         return True
     except (OSError, KeyError, ValueError):
@@ -408,6 +462,12 @@ def cmd_set(arg):
             which, other = ("cpu", "gpu") if key == "fan_cpu_mode" else ("gpu", "cpu")
             write(f"{SYS}/fan_mode", f"{which}={m} {other}={state['fan_mode'][other]}")
             state["fan_mode"][which] = m
+        elif key == "coolboost":
+            on = parse_coolboost(arg.get("value"))
+            if on is None:
+                return {"ok": False, "err": "coolboost on|off"}
+            write(f"{SYS}/coolboost", 1 if on else 0)
+            state["coolboost"] = on
         elif key in ("brightness", "kbd_bright"):
             v = int(arg["value"])
             if not 0 <= v <= 100:

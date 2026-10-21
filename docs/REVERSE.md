@@ -20,6 +20,22 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
+### CoolBoost (direct EC)
+
+CoolBoost is not a WMI command on this machine. It is direct EC register
+`0x10`: **0x00 = off, 0x01 = on**. Windows NitroSense sets it directly; a
+`GetGamingMiscSetting` scan found no selector that tracks it.
+
+- Driver: `coolboost` RW sysfs, accepts `0`/`1`/`on`/`off`.
+- Reads always work. Writes are allowed only while both fans report `auto`;
+  in `max`/`custom` the driver returns `-EPERM` and leaves the EC value
+  retained. This matches NitroSense, where the toggle is greyed outside Auto.
+- The probe-time value is saved and restored on module unload.
+- Evidence: `windows-captures/coolboost/FINDINGS.md` (ignored). Auto idle effect
+  at matched temperatures: +418 CPU RPM / +451 GPU RPM on Windows at 92 °C.
+  Linux spot check at 62 °C CPU / 53 °C GPU: about 2040/2307 RPM off and
+  2255/2521 RPM on, i.e. roughly +215/+215; the direction matches.
+
 Notable findings:
 
 - FTBL values match the predator_v4 EC enum:
@@ -37,9 +53,3 @@ Notable findings:
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
 - `wmi_raw` sysfs node (0600) sends raw `method + bytes` calls for probing.
-
-## Backlogs & notes
-
-- **CoolBoost**: not implemented. Acer's NitroSense exposes a CoolBoost™ toggle on the Fan Control panel; purpose/mapping unknown (no sub-command identified in the table above). Plan: reverse-engineer via WMI/EC probing (risky, needs the user present). No code shipped.
-- **CPU+GPU temp combo**: done — the thermal pane shows CPU (package, coretemp hwmon) and GPU (discrete NVIDIA, nvidia-smi) temps; model names read live from `/proc/cpuinfo` + `nvidia-smi` (short forms). The older "cpu package + ec board" combo is replaced.
-- **Logs**: the kernel driver logs via printk (`pr_info`/`pr_err`/`pr_warn`) → `dmesg` / `journalctl -k` (also dumped by `sudo nitro status`). `nitrod` and `nitro-linux` are silent (no userspace logging).

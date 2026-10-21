@@ -11,6 +11,7 @@ Q stops daemon
 
 keys
     fans        A Auto, S Max, D Custom     custom:  (. /) cpu -+5, (; ') gpu -+5
+                i CoolBoost (Auto only)
     power       Z X C V B                   power plan
     thermal     F                           switch °C / °F
 
@@ -528,6 +529,26 @@ class UI:
         fm = self.wanted.get("fan_mode") or {}
         return fm.get(which)
 
+    def coolboost_live(self):
+        v = self.live.get("coolboost")
+        if v is None:
+            return None
+        return str(v).strip() in ("1", "on", "true")
+
+    def toggle_coolboost(self):
+        if self.fan_sel() != "auto":
+            self.msg = "» CoolBoost is only available in Auto mode"
+            self.msg_time = time.time()
+            return
+        on = self.coolboost_live()
+        if on is None:
+            self.msg = "!! CoolBoost unavailable (driver update required)"
+            self.msg_time = time.time()
+            return
+        self.send(
+            {"cmd": "set", "key": "coolboost", "value": not on},
+            f"CoolBoost → {'ON' if not on else 'OFF'}")
+
     def duty(self, which):
         try:
             v = self.live.get(f"fan_{which}_duty")
@@ -747,6 +768,27 @@ class UI:
                 pass
         s.refresh()
 
+    def draw_coolboost(self, y, px, cur):
+        on = self.coolboost_live()
+        if on is None:
+            label = "(i) CoolBoost  --"
+            suffix = " [N/A]"
+            enabled = False
+        else:
+            label = f"(i) CoolBoost  {'● ON' if on else '○ OFF'}"
+            enabled = cur == "auto"
+            suffix = ""
+            if not enabled:
+                suffix = f"  [{cur.title() if cur else 'Mode'}]"
+        text = f"{label}{suffix} "
+        x = px + 2
+        if enabled:
+            attr = curses.color_pair(C.FG) | curses.A_BOLD
+        else:
+            attr = curses.color_pair(C.DIM)
+        self.addstr(y, x, text, attr)
+        self.click(y, x, 1, len(text), ("coolboost",))
+
     def draw_fan_control(self, py, px, ph, pw):
         x = px + 2
         ylim = py + ph - 1
@@ -759,6 +801,7 @@ class UI:
             self.button(y, x, bw, f"({FAN_KEYS[i]}/{FAN_KEYS[i].lower()}) {name}",
                         active=(cur == m), action=("fanmode", m))
             y += 4
+        self.draw_coolboost(py + 15, px, cur)
         cy = ylim - 1
         if cy - 1 > y:
             pre = "Created by "
@@ -1208,6 +1251,7 @@ class UI:
             ("h", "fans"),
             ("b", "  *(a/A)* auto    *(s/S)* max    *(d/D)* custom"),
             ("b", "  custom duty:  *(. /)* cpu -/+5     *(; ')* gpu -/+5"),
+            ("b", "  *(i)* CoolBoost toggle   (Auto only; disabled on Max/Custom)"),
             ("s", ""),
             ("h", "power"),
             ("b", "  *(Z)* power saver    *(X)* quiet    *(C)* balance"),
@@ -1376,6 +1420,8 @@ class UI:
                 self.set_refresh(action[1])
             elif kind == "fanmode":
                 self.set_fan_mode(action[1])
+            elif kind == "coolboost":
+                self.toggle_coolboost()
             elif kind == "plan":
                 self.set_plan(action[1])
             elif kind == "tab":
@@ -1470,6 +1516,8 @@ class UI:
             self.set_fan_mode("max")
         elif ch in (ord("d"), ord("D")):
             self.set_fan_mode("custom")
+        elif ch in (ord("i"), ord("I")):
+            self.toggle_coolboost()
         elif ch in (ord("."), ord("/"), ord(";"), ord("'")):
             which = "cpu" if ch in (ord("."), ord("/")) else "gpu"
             cur = self.duty(which)

@@ -15,6 +15,18 @@ while read -r kind a b c d e f g; do
       echo "$a $b $c $d $e $f $g" > "$BASE/kbd_dynamic" 2>/dev/null || echo "nitro-apply: dyn failed" >&2 ;;
     fan)
       echo "$b" > "$BASE/fan_$a" 2>/dev/null || echo "nitro-apply: fan $a $b failed" >&2 ;;
+    coolboost)
+      case "$a" in
+        on|1) cb=1 ;;
+        off|0) cb=0 ;;
+        *) echo "nitro-apply: coolboost expects on|off, got '$a'" >&2; continue ;;
+      esac
+      fanmode=$(cat "$BASE/fan_mode" 2>/dev/null || true)
+      if [ "$fanmode" = "cpu=auto gpu=auto" ]; then
+        echo "$cb" > "$BASE/coolboost" 2>/dev/null || echo "nitro-apply: coolboost $a failed (driver update required?)" >&2
+      else
+        echo "nitro-apply: coolboost skipped (fans must be auto, have '$fanmode')" >&2
+      fi ;;
     profile)
       echo "$a" > /sys/class/platform-profile/platform-profile-0/profile 2>/dev/null || echo "nitro-apply: profile $a failed" >&2 ;;
     *) echo "nitro-apply: unknown line: $kind $a $b $c $d $e $f $g" >&2 ;;
