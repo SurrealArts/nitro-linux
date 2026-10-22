@@ -1,6 +1,6 @@
 # Maintainer: SurrealArts <heiwamakina@gmail.com>
 pkgname=nitro-linux
-pkgver=2.1.0
+pkgver=2.2.0
 pkgrel=1
 pkgdesc='Acer Nitro AN515-57 kernel driver, daemon, and TUI'
 arch=('x86_64')

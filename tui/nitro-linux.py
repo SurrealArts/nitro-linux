@@ -31,7 +31,7 @@ import sys
 import time
 from collections import deque
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 
 def project_version():
