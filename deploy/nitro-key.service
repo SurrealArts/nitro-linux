@@ -1,0 +1,13 @@
+[Unit]
+Description=Nitro key shortcut
+Documentation=https://github.com/SurrealArts/nitro-linux
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env nitro key listen
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -8,6 +8,55 @@ if pacman -Qq nitro-linux >/dev/null 2>&1; then
   exit 1
 fi
 
+FIRST_INSTALL=0
+[ -e /usr/local/bin/nitro ] || FIRST_INSTALL=1
+
+invoking_user() {
+  local u="${SUDO_USER:-}"
+  if [ -z "$u" ] || [ "$u" = root ]; then
+    u="$(logname 2>/dev/null || true)"
+  fi
+  if [ -z "$u" ] || [ "$u" = root ]; then
+    return 1
+  fi
+  id "$u" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$u"
+}
+
+run_as_user() {
+  local u="$1"; shift
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$u" -- "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u "$u" -- "$@"
+  else
+    return 1
+  fi
+}
+
+auto_key() {
+  local u uid home
+  if ! u="$(invoking_user)"; then
+    echo "[*] Nitro key: run 'nitro key auto' as your desktop user."
+    return 0
+  fi
+  uid="$(id -u "$u")"
+  home="$(getent passwd "$u" | cut -d: -f6)"
+  if [ -z "$home" ]; then
+    echo "[*] Nitro key: run 'nitro key auto' as $u."
+    return 0
+  fi
+  if [ -d "/run/user/$uid" ] && [ -S "/run/user/$uid/bus" ]; then
+    echo "[*] Nitro key: configuring for $u"
+    if run_as_user "$u" env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" /usr/local/bin/nitro key auto; then
+      return 0
+    fi
+    echo "[!] Nitro key setup failed; run 'nitro key auto' as $u."
+  else
+    echo "[*] Nitro key: run 'nitro key auto' as $u after logging in."
+  fi
+}
+
 preflight_sb() {
   # For Secure Boot systems
   local efivar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
@@ -63,7 +112,7 @@ install -m644 deploy/nitro-apply.service /etc/systemd/system/nitro-apply.service
 install -m755 daemon/nitrod.py /usr/local/bin/nitrod
 install -m755 tui/nitro-linux.py /usr/local/bin/nitro-linux
 install -m755 tools/nitro.py /usr/local/bin/nitro
-rm -f /usr/local/bin/nitro-tui  # remove the pre-rename command
+install -Dm644 deploy/nitro-key.service /usr/local/lib/systemd/user/nitro-key.service
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then
   sed -i "s/^VERSION = .*/VERSION = \"$(tr -d '[:space:]' < "$VFILE")\"/" /usr/local/bin/nitro-linux
@@ -95,3 +144,8 @@ ls /sys/devices/platform/nitro/ | tr '\n' ' '; echo
 sensors 2>/dev/null | grep -A4 nitro || true
 ls /sys/class/leds/ | grep nitro || true
 echo "[*] done. 'nitro-linux' panel and 'nitro' CLI are ready."
+if [ "$FIRST_INSTALL" = 1 ]; then
+  auto_key
+else
+  echo "[*] Nitro key: run 'nitro key auto' as your user to refresh the listener."
+fi

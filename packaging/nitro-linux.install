@@ -13,6 +13,67 @@ _check_source_install() {
   fi
 }
 
+_invoking_user() {
+  local u="${SUDO_USER:-}"
+  if [ -z "$u" ] || [ "$u" = root ]; then
+    u="$(logname 2>/dev/null || true)"
+  fi
+  if [ -z "$u" ] || [ "$u" = root ]; then
+    return 1
+  fi
+  id "$u" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$u"
+}
+
+_run_as_user() {
+  local u="$1"; shift
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$u" -- "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u "$u" -- "$@"
+  else
+    return 1
+  fi
+}
+
+_auto_key() {
+  local u uid home
+  if ! u="$(_invoking_user)"; then
+    echo ":: Run 'nitro key auto' as your desktop user to bind the Nitro key."
+    return 0
+  fi
+  uid="$(id -u "$u")"
+  home="$(getent passwd "$u" | cut -d: -f6)"
+  if [ -z "$home" ]; then
+    echo ":: Run 'nitro key auto' as $u to bind the Nitro key."
+    return 0
+  fi
+  if [ -d "/run/user/$uid" ] && [ -S "/run/user/$uid/bus" ]; then
+    echo ":: Nitro key: configuring for $u"
+    if _run_as_user "$u" env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" /usr/bin/nitro key auto; then
+      return 0
+    fi
+    echo ":: Nitro key setup failed; run 'nitro key auto' as $u."
+  else
+    echo ":: Nitro key: run 'nitro key auto' as $u after logging in."
+  fi
+}
+
+_disable_key() {
+  local u uid home
+  if ! u="$(_invoking_user)"; then
+    return 0
+  fi
+  uid="$(id -u "$u")"
+  home="$(getent passwd "$u" | cut -d: -f6)"
+  [ -n "$home" ] || return 0
+  rm -f "$home/.config/systemd/user/default.target.wants/nitro-key.service"
+  rm -f "$home/.config/autostart/nitro-key.desktop"
+  if [ -d "/run/user/$uid" ] && [ -S "/run/user/$uid/bus" ]; then
+    _run_as_user "$u" env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user disable --now nitro-key.service >/dev/null 2>&1 || true
+  fi
+}
+
 post_install() {
   _install_config
   _check_source_install
@@ -21,6 +82,7 @@ post_install() {
     systemctl enable nitro-apply.service nitrod.service
   fi
   echo ":: Reboot once to load the nitro kernel module."
+  _auto_key
 }
 
 post_upgrade() {
@@ -31,9 +93,11 @@ post_upgrade() {
     systemctl try-restart nitro-apply.service 2>/dev/null || true
     systemctl try-restart nitrod.service 2>/dev/null || true
   fi
+  echo ":: Nitro key: run 'nitro key auto' to enable or refresh the listener."
 }
 
 pre_remove() {
+  _disable_key
   if [ -d /run/systemd/system ]; then
     systemctl disable --now nitrod.service nitro-apply.service 2>/dev/null || true
   fi
@@ -43,5 +107,5 @@ post_remove() {
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
   fi
-  echo ":: /etc/nitro.conf and /var/lib/nitro were kept."
+  echo ":: /etc/nitro.conf, /var/lib/nitro, and the user Nitro key config were kept."
 }

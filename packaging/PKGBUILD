@@ -30,6 +30,7 @@ package() {
 
   install -Dm644 "$src/deploy/nitrod.service" "$pkgdir/usr/lib/systemd/system/nitrod.service"
   install -Dm644 "$src/deploy/nitro-apply.service" "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
+  install -Dm644 "$src/deploy/nitro-key.service" "$pkgdir/usr/lib/systemd/user/nitro-key.service"
   sed -i 's#/usr/local/bin/#/usr/bin/#g' \
     "$pkgdir/usr/lib/systemd/system/nitrod.service" \
     "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
