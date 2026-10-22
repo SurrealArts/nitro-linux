@@ -96,3 +96,7 @@ Runtime: Python 3.8+, `nvidia-smi` for GPU sensors
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+This project is an independent, open-source utility for Linux and is not affiliated with, sponsored by, or endorsed by Acer Inc. All product and service names are trademarks of their respective owners.
