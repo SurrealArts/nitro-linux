@@ -8,19 +8,34 @@ if pacman -Qq nitro-linux >/dev/null 2>&1; then
   exit 1
 fi
 
-FIRST_INSTALL=0
-[ -e /usr/local/bin/nitro ] || FIRST_INSTALL=1
-
 invoking_user() {
-  local u="${SUDO_USER:-}"
-  if [ -z "$u" ] || [ "$u" = root ]; then
-    u="$(logname 2>/dev/null || true)"
-  fi
-  if [ -z "$u" ] || [ "$u" = root ]; then
-    return 1
-  fi
-  id "$u" >/dev/null 2>&1 || return 1
-  printf '%s\n' "$u"
+  local u sid uid users=
+  for u in "${SUDO_USER:-}" "$(logname 2>/dev/null || true)"; do
+    if [ -n "$u" ] && [ "$u" != root ] && id "$u" >/dev/null 2>&1; then
+      printf '%s\n' "$u"
+      return 0
+    fi
+  done
+  command -v loginctl >/dev/null 2>&1 || return 1
+  for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}'); do
+    [ "$(loginctl show-session "$sid" -p Class --value 2>/dev/null)" = user ] || continue
+    [ "$(loginctl show-session "$sid" -p Remote --value 2>/dev/null)" = no ] || continue
+    [ "$(loginctl show-session "$sid" -p Active --value 2>/dev/null)" = yes ] || continue
+    uid="$(loginctl show-session "$sid" -p User --value 2>/dev/null)"
+    [ -n "$uid" ] || continue
+    u="$(id -nu "$uid" 2>/dev/null)" || continue
+    [ "$u" != root ] || continue
+    case " $users " in
+      *" $u "*) ;;
+      *) users="$users $u" ;;
+    esac
+  done
+  users="${users# }"
+  [ -n "$users" ] || return 1
+  case "$users" in
+    *" "*) return 1 ;;
+  esac
+  printf '%s\n' "$users"
 }
 
 run_as_user() {
@@ -46,15 +61,19 @@ auto_key() {
     echo "[*] Nitro key: run 'nitro key auto' as $u."
     return 0
   fi
-  if [ -d "/run/user/$uid" ] && [ -S "/run/user/$uid/bus" ]; then
-    echo "[*] Nitro key: configuring for $u"
-    if run_as_user "$u" env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" /usr/local/bin/nitro key auto; then
-      return 0
-    fi
-    echo "[!] Nitro key setup failed; run 'nitro key auto' as $u."
-  else
-    echo "[*] Nitro key: run 'nitro key auto' as $u after logging in."
+  if [ -e "$home/.config/nitro/key.json" ]; then
+    echo "[*] Nitro key: already configured; run 'nitro key auto' as $u to refresh the listener."
+    return 0
   fi
+  echo "[*] Nitro key: configuring for $u"
+  if run_as_user "$u" env \
+      HOME="$home" \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      /usr/local/bin/nitro key auto --if-unconfigured; then
+    return 0
+  fi
+  echo "[!] Nitro key: setup incomplete; run 'nitro key auto' as $u to finish."
 }
 
 preflight_sb() {
@@ -144,8 +163,4 @@ ls /sys/devices/platform/nitro/ | tr '\n' ' '; echo
 sensors 2>/dev/null | grep -A4 nitro || true
 ls /sys/class/leds/ | grep nitro || true
 echo "[*] done. 'nitro-linux' panel and 'nitro' CLI are ready."
-if [ "$FIRST_INSTALL" = 1 ]; then
-  auto_key
-else
-  echo "[*] Nitro key: run 'nitro key auto' as your user to refresh the listener."
-fi
+auto_key

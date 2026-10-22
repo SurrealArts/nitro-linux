@@ -117,8 +117,11 @@ def key_config_path():
     override = os.environ.get("NITRO_KEY_CONFIG")
     if override:
         return pathlib.Path(override).expanduser()
-    base = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (pathlib.Path.home() / ".config"))
-    return base / "nitro" / "key.json"
+    # Keep this beside the TUI config, which is also fixed at ~/.config/nitro.
+    # The installer, the CLI, and the user service must resolve the same file
+    # even when the shell and the systemd user manager see different
+    # XDG_CONFIG_HOME values.
+    return pathlib.Path.home() / ".config" / "nitro" / "key.json"
 
 
 def load_key_config():
@@ -301,8 +304,32 @@ def _make_key(dev, scan, code):
     return entry
 
 
+def _dmi(name):
+    try:
+        return pathlib.Path(f"/sys/class/dmi/id/{name}").read_text().strip()
+    except OSError:
+        return ""
+
+
+def _is_acer_nitro():
+    vendor = _dmi("sys_vendor").lower()
+    product = _dmi("product_name").lower()
+    return "acer" in vendor and ("nitro" in product or "an515" in product or "an517" in product)
+
+
 def detect_known_key():
-    for dev in list_input_devices(keyboards_only=True):
+    devices = list_input_devices(keyboards_only=True)
+    if _is_acer_nitro():
+        for dev in devices:
+            value = dev["props"].get("KEYBOARD_KEY_f5")
+            if value not in ("presentation", "prog1"):
+                continue
+            if value == "prog1":
+                code = key_code("KEY_PROG1") or 148
+            else:
+                code = key_code("KEY_PRESENTATION") or 425
+            return _make_key(dev, 0xf5, code)
+    for dev in devices:
         for key, value in dev["props"].items():
             if not key.startswith("KEYBOARD_KEY_") or value != "presentation":
                 continue
@@ -311,9 +338,7 @@ def detect_known_key():
                 scan = int(scancode, 16)
             except ValueError:
                 continue
-            code = key_code("KEY_PRESENTATION")
-            if code is None:
-                code = 425
+            code = key_code("KEY_PRESENTATION") or 425
             return _make_key(dev, scan, code)
     return None
 
@@ -446,9 +471,12 @@ def systemd_running():
     return pathlib.Path("/run/systemd/system").is_dir()
 
 
+def _user_config_home():
+    return pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (pathlib.Path.home() / ".config"))
+
+
 def autostart_path():
-    base = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (pathlib.Path.home() / ".config"))
-    return base / "autostart" / "nitro-key.desktop"
+    return _user_config_home() / "autostart" / "nitro-key.desktop"
 
 
 def write_autostart():
@@ -482,6 +510,51 @@ def remove_autostart():
         print(f"cannot remove {autostart_path()}: {e}", file=sys.stderr)
 
 
+def _unit_enable_link():
+    return _user_config_home() / "systemd" / "user" / "default.target.wants" / KEY_UNIT
+
+
+def _unit_enabled_offline():
+    return _unit_enable_link().exists()
+
+
+def _user_manager_running():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    return bool(runtime and (pathlib.Path(runtime) / "systemd" / "private").exists())
+
+
+def _unit_fragment():
+    for base in ("/usr/local/lib/systemd/user", "/usr/lib/systemd/user", "/etc/systemd/user"):
+        path = pathlib.Path(base) / KEY_UNIT
+        if path.is_file():
+            return path
+    return None
+
+
+def enable_unit_offline():
+    fragment = _unit_fragment()
+    if fragment is None:
+        return False
+    link = _unit_enable_link()
+    try:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(fragment)
+    except OSError:
+        return False
+    return True
+
+
+def disable_unit_offline():
+    try:
+        _unit_enable_link().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"cannot remove {_unit_enable_link()}: {e}", file=sys.stderr)
+
+
 def _systemctl_user(*args):
     if not systemd_running() or not shutil.which("systemctl"):
         return None
@@ -494,7 +567,7 @@ def user_service_state():
     if not systemd_running():
         return {"load": "unavailable", "active": "unknown", "enabled": "unknown"}
     r = _systemctl_user("show", "--property=LoadState", "--value", KEY_UNIT)
-    if r is None:
+    if r is None or r.returncode:
         return {"load": "unavailable", "active": "unknown", "enabled": "unknown"}
     load = r.stdout.strip() or "unknown"
     if load == "not-found":
@@ -603,10 +676,10 @@ def _listen_key(entry, command, once=False):
                                 continue
                             if value != 1:
                                 continue
-                            matched = (
-                                (want_scan is not None and scan == want_scan) or
-                                (want_code is not None and code == want_code)
-                            )
+                            if want_scan is not None and scan is not None:
+                                matched = scan == want_scan
+                            else:
+                                matched = want_code is not None and code == want_code
                             if not matched or modifiers:
                                 continue
                             now = time.monotonic()
@@ -640,7 +713,7 @@ def key_usage():
     prog = pathlib.Path(sys.argv[0]).name
     print("usage:")
     print(f"    {prog} key [status]")
-    print(f"    {prog} key auto")
+    print(f"    {prog} key auto [--if-unconfigured]")
     print(f"    {prog} key find [--timeout SECONDS] [--no-save]")
     print(f"    {prog} key bind [--no-service] [--] [command ...]")
     print(f"    {prog} key unbind")
@@ -648,6 +721,7 @@ def key_usage():
     print("")
     print("The Nitro key is captured from /dev/input without changing the udev")
     print("mapping.  auto/find/status/bind run as your user; do not use sudo.")
+    print("auto --if-unconfigured is a no-op when a key config already exists.")
     print("If access is denied, add your user to the input group:")
     print("    sudo usermod -aG input \"$USER\"")
     print("then log out and back in.")
@@ -706,7 +780,10 @@ def key_status():
     elif state["load"] == "root":
         print("  service:   unknown (run as your user, not root)")
     elif state["load"] in ("unknown", "unavailable"):
-        print("  service:   unavailable (systemd user services not found)")
+        if _unit_enabled_offline():
+            print("  service:   enabled (starts at next login)")
+        else:
+            print("  service:   unavailable (systemd user services not found)")
         print(f"  autostart: {'installed' if autostart_path().is_file() else 'not installed'}")
     else:
         print(f"  service:   {state['active']} ({state['enabled']})")
@@ -853,7 +930,13 @@ def activate_listener():
             print("Service: active (enabled). Press the Nitro key to run the command.")
             print("Desktop shortcuts are unchanged; if another shortcut uses this key, remove it in your desktop settings and run 'nitro key auto' again.")
             return 0
+        if state["load"] in ("unavailable", "unknown") and not _user_manager_running() and enable_unit_offline():
+            remove_autostart()
+            print(f"Service: enabled for the next login ({_unit_enable_link()}).")
+            print("Desktop shortcuts are unchanged; if another shortcut uses this key, remove it in your desktop settings and run 'nitro key auto' again.")
+            return 0
         print("The user service is not available; using XDG autostart.")
+    disable_unit_offline()
     write_autostart()
     print(f"Autostart: {autostart_path()} (starts at next login)")
     print("Start now: nitro key listen")
@@ -929,20 +1012,29 @@ def key_bind(args):
 
 
 def key_auto(args):
+    if_unconfigured = False
     for arg in args:
         if arg in ("-h", "--help"):
             key_usage()
             return 0
+        if arg == "--if-unconfigured":
+            if_unconfigured = True
+            continue
         raise SystemExit(f"unknown option: {arg}")
     if os.geteuid() == 0:
         raise SystemExit("run 'nitro key auto' as your user, not with sudo")
+    if if_unconfigured and key_config_path().is_file():
+        return 0
     cfg = load_key_config()
     entry = key_entry(cfg)
     changed = False
     if entry is None:
         entry = detect_known_key()
         if entry is None:
-            raise SystemExit("could not detect the Nitro key; run 'nitro key find' as your user")
+            if if_unconfigured or not sys.stdin.isatty():
+                raise SystemExit("could not detect the Nitro key; run 'nitro key find' as your user")
+            print("Could not identify the Nitro key automatically.", file=sys.stderr, flush=True)
+            entry = find_key()
         cfg["version"] = 1
         cfg["key"] = entry
         changed = True
@@ -997,6 +1089,7 @@ def key_unbind(args):
         _systemctl_user("disable", "--now", KEY_UNIT)
         remove_autostart()
         print("Unbound and stopped nitro-key.service.")
+    disable_unit_offline()
     if not had_command:
         print("There was no command bound.")
     return 0

@@ -9,15 +9,33 @@ if pacman -Qq nitro-linux >/dev/null 2>&1; then
 fi
 
 invoking_user() {
-  local u="${SUDO_USER:-}"
-  if [ -z "$u" ] || [ "$u" = root ]; then
-    u="$(logname 2>/dev/null || true)"
-  fi
-  if [ -z "$u" ] || [ "$u" = root ]; then
-    return 1
-  fi
-  id "$u" >/dev/null 2>&1 || return 1
-  printf '%s\n' "$u"
+  local u sid uid users=
+  for u in "${SUDO_USER:-}" "$(logname 2>/dev/null || true)"; do
+    if [ -n "$u" ] && [ "$u" != root ] && id "$u" >/dev/null 2>&1; then
+      printf '%s\n' "$u"
+      return 0
+    fi
+  done
+  command -v loginctl >/dev/null 2>&1 || return 1
+  for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}'); do
+    [ "$(loginctl show-session "$sid" -p Class --value 2>/dev/null)" = user ] || continue
+    [ "$(loginctl show-session "$sid" -p Remote --value 2>/dev/null)" = no ] || continue
+    [ "$(loginctl show-session "$sid" -p Active --value 2>/dev/null)" = yes ] || continue
+    uid="$(loginctl show-session "$sid" -p User --value 2>/dev/null)"
+    [ -n "$uid" ] || continue
+    u="$(id -nu "$uid" 2>/dev/null)" || continue
+    [ "$u" != root ] || continue
+    case " $users " in
+      *" $u "*) ;;
+      *) users="$users $u" ;;
+    esac
+  done
+  users="${users# }"
+  [ -n "$users" ] || return 1
+  case "$users" in
+    *" "*) return 1 ;;
+  esac
+  printf '%s\n' "$users"
 }
 
 disable_key() {

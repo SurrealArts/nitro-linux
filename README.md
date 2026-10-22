@@ -97,10 +97,11 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 | `nitro key listen`         | Run the listener in the foreground, for systems without systemd user services.                       |
 
 - **Trigger**: Only the bare key fires; Super, Alt, Ctrl, Shift, and Fn combinations are ignored.
-- **Config**: Binding state is `~/.config/nitro/key.json` and is kept across upgrades and uninstalls.
-- **Autostart**: `nitro-key.service` is the systemd user unit; without systemd user services, `nitro key auto` or `nitro key bind` writes `~/.config/autostart/nitro-key.desktop`, and `nitro key listen` is the manual fallback.
+- **Installer**: `nitro key auto --if-unconfigured` is the installer form; it does nothing when `~/.config/nitro/key.json` already exists.
+- **Config**: Binding state is always `~/.config/nitro/key.json`, matching the TUI config, and is kept across upgrades and uninstalls.
+- **Autostart**: `nitro-key.service` is the systemd user unit; without a running user manager, installers enable it for the next login; without systemd user services, `nitro key auto` or `nitro key bind` writes `~/.config/autostart/nitro-key.desktop`, and `nitro key listen` is the manual fallback.
 - **Permissions**: Reading `/dev/input/event*` requires the `input` group: `sudo usermod -aG input "$USER"`, then log out and back in.
-- **Install**: First source or package install attempts `nitro key auto` once for the invoking desktop user; otherwise run it yourself.
+- **Install**: Package install, package upgrade, and source install run `nitro key auto --if-unconfigured` once for the invoking desktop user; an existing config is never rewritten. Otherwise run it yourself.
 - **Conflicts**: `nitro key auto` never rewrites an existing command and does not modify udev rules or desktop shortcuts; if the desktop already uses this key, remove that shortcut and rerun.
 
 ### Persistent files and installed controls
@@ -112,7 +113,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, and the `profile_ac`/`profile_battery` keys; kept on uninstall.
 - `/var/lib/nitro/history.db`: 24-hour fan, temperature, and duty history written by `nitrod`; kept on uninstall.
 - `~/.config/nitro/tui.json`: TUI refresh interval and °C/°F preference; kept on uninstall.
-- `~/.config/nitro/key.json`: captured Nitro key and bound command; kept across installs and uninstalls.
+- `~/.config/nitro/key.json`: captured Nitro key and bound command; fixed at `~/.config` so the installer, CLI, and user service agree; kept across installs and uninstalls.
 - `~/.config/autostart/nitro-key.desktop`: XDG fallback that starts `nitro key listen` at login when systemd user services are unavailable; removed on uninstall.
 - `/run/nitro.sock`: runtime Unix socket for `nitrod`; not persistent.
 
