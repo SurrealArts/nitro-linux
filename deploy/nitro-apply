@@ -6,29 +6,132 @@ BASE=/sys/devices/platform/nitro
 CONF=/etc/nitro.conf
 [ -d "$BASE" ] || exit 0
 [ -f "$CONF" ] || exit 0
+
+CAP_FILE="$BASE/capabilities"
+HAS_FAN=0
+FAN_COUNT=0
+HAS_FAN_MODE=0
+HAS_PROFILE=0
+HAS_RGB=0
+RGB_ZONES=0
+HAS_DYN=0
+DYN_EFFECTS=0
+HAS_COOLBOOST=0
+IS_PROBE=0
+if [ -f "$CAP_FILE" ]; then
+  while read -ra caps; do
+    for cap in "${caps[@]}"; do
+      case "$cap" in
+        probe=1) IS_PROBE=1 ;;
+        fan=1) HAS_FAN=1 ;;
+        fan_count=*) FAN_COUNT=${cap#fan_count=} ;;
+        fan_mode=1) HAS_FAN_MODE=1 ;;
+        profile=*) HAS_PROFILE=1 ;;
+        rgb=*) HAS_RGB=1; RGB_ZONES=${cap#rgb=} ;;
+        dyn=*) HAS_DYN=1; DYN_EFFECTS=${cap#dyn=} ;;
+        coolboost=*) HAS_COOLBOOST=1 ;;
+      esac
+    done
+  done < "$CAP_FILE"
+elif grep -q "Nitro AN515-57" /sys/class/dmi/id/product_name 2>/dev/null; then
+  HAS_FAN=1
+  FAN_COUNT=2
+  HAS_FAN_MODE=1
+  HAS_PROFILE=1
+  HAS_RGB=1
+  RGB_ZONES=4
+  HAS_DYN=1
+  DYN_EFFECTS=5
+  HAS_COOLBOOST=1
+else
+  echo "nitro-apply: capabilities unavailable and model unverified; skipping" >&2
+  exit 0
+fi
+
+if [ "$IS_PROBE" = 1 ]; then
+  echo "nitro-apply: driver is in probe mode; skipping" >&2
+  exit 0
+fi
+
+find_profile() {
+  local pp owner
+  for pp in /sys/class/platform-profile/platform-profile-*; do
+    [ -e "$pp/profile" ] || continue
+    owner=$(readlink -f "$pp/device" 2>/dev/null || true)
+    case "$owner" in
+      */nitro) echo "$pp/profile"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+PROFILE_PATH=""
+if [ "$HAS_PROFILE" = 1 ]; then
+  PROFILE_PATH=$(find_profile || true)
+fi
+
 while read -r kind a b c d e f g; do
   case "$kind" in
     ""|"#"*) continue ;;
     static)
-      echo "$a $b $c $d" > "$BASE/kbd_static" 2>/dev/null || echo "nitro-apply: static $a $b $c $d failed" >&2 ;;
-    dyn)
-      echo "$a $b $c $d $e $f $g" > "$BASE/kbd_dynamic" 2>/dev/null || echo "nitro-apply: dyn failed" >&2 ;;
-    fan)
-      echo "$b" > "$BASE/fan_$a" 2>/dev/null || echo "nitro-apply: fan $a $b failed" >&2 ;;
-    coolboost)
-      case "$a" in
-        on|1) cb=1 ;;
-        off|0) cb=0 ;;
-        *) echo "nitro-apply: coolboost expects on|off, got '$a'" >&2; continue ;;
-      esac
-      fanmode=$(cat "$BASE/fan_mode" 2>/dev/null || true)
-      if [ "$fanmode" = "cpu=auto gpu=auto" ]; then
-        echo "$cb" > "$BASE/coolboost" 2>/dev/null || echo "nitro-apply: coolboost $a failed (driver 2.1.0?)" >&2
+      if [ "$HAS_RGB" = 1 ]; then
+        if [ "${RGB_ZONES:-0}" = 1 ] && [ "$a" != 1 ]; then
+          echo "nitro-apply: static zone $a skipped (single zone)" >&2
+        else
+          echo "$a $b $c $d" > "$BASE/kbd_static" 2>/dev/null || echo "nitro-apply: static $a $b $c $d failed" >&2
+        fi
       else
-        echo "nitro-apply: coolboost skipped (fans must be auto, have '$fanmode')" >&2
+        echo "nitro-apply: static skipped (RGB not supported)" >&2
+      fi ;;
+    dyn)
+      if [ "$HAS_DYN" = 1 ]; then
+        if [ "${DYN_EFFECTS:-0}" -ge 1 ] && [ "$a" -gt "${DYN_EFFECTS:-0}" ]; then
+          echo "nitro-apply: dyn mode $a skipped (only $DYN_EFFECTS effects)" >&2
+        else
+          echo "$a $b $c $d $e $f $g" > "$BASE/kbd_dynamic" 2>/dev/null || echo "nitro-apply: dyn failed" >&2
+        fi
+      else
+        echo "nitro-apply: dyn skipped (dynamic RGB not supported)" >&2
+      fi ;;
+    fan)
+      if [ "$HAS_FAN" = 1 ]; then
+        if [ "$a" = "gpu" ] && [ "${FAN_COUNT:-0}" -lt 2 ]; then
+          echo "nitro-apply: fan gpu skipped (single fan)" >&2
+        else
+          echo "$b" > "$BASE/fan_$a" 2>/dev/null || echo "nitro-apply: fan $a $b failed" >&2
+        fi
+      else
+        echo "nitro-apply: fan skipped (fan not supported)" >&2
+      fi ;;
+    coolboost)
+      if [ "$HAS_COOLBOOST" = 1 ] && [ "$HAS_FAN_MODE" = 1 ]; then
+        case "$a" in
+          on|1) cb=1 ;;
+          off|0) cb=0 ;;
+          *) echo "nitro-apply: coolboost expects on|off, got '$a'" >&2; continue ;;
+        esac
+        fanmode=$(cat "$BASE/fan_mode" 2>/dev/null || true)
+        if [ "${FAN_COUNT:-0}" -ge 2 ]; then
+          fans_auto=0
+          [ "$fanmode" = "cpu=auto gpu=auto" ] && fans_auto=1
+        else
+          fans_auto=0
+          case "$fanmode" in "cpu=auto"*) fans_auto=1 ;; esac
+        fi
+        if [ "$fans_auto" = 1 ]; then
+          echo "$cb" > "$BASE/coolboost" 2>/dev/null || echo "nitro-apply: coolboost $a failed" >&2
+        else
+          echo "nitro-apply: coolboost skipped (fans must be auto, have '$fanmode')" >&2
+        fi
+      else
+        echo "nitro-apply: coolboost skipped (CoolBoost not supported)" >&2
       fi ;;
     profile)
-      echo "$a" > /sys/class/platform-profile/platform-profile-0/profile 2>/dev/null || echo "nitro-apply: profile $a failed" >&2 ;;
+      if [ "$HAS_PROFILE" = 1 ] && [ -n "$PROFILE_PATH" ]; then
+        echo "$a" > "$PROFILE_PATH" 2>/dev/null || echo "nitro-apply: profile $a failed" >&2
+      else
+        echo "nitro-apply: profile skipped (platform profile not supported)" >&2
+      fi ;;
     *) echo "nitro-apply: unknown line: $kind $a $b $c $d $e $f $g" >&2 ;;
   esac
 done < "$CONF"

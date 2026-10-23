@@ -1,0 +1,137 @@
+name: "Bug Report"
+description: "Report a bug in nitro-linux"
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: distro-kernel
+    attributes:
+      label: "Distro & Kernel"
+      placeholder: "e.g., Arch Linux 6.12.1-arch1-1"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "nitro-linux version"
+      description: "Run `nitro --version` or `pacman -Q nitro-linux`"
+      placeholder: "2.2.1-1"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: "Model"
+      description: "Run `cat /sys/class/dmi/id/product_name`"
+      placeholder: "Nitro AN515-57"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: "Install Method"
+      options:
+        - Package
+        - Source
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Description
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "Bug Description"
+      description: "A clear and concise description of the bug"
+      placeholder: "Describe the bug..."
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Steps to Reproduce
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Numbered steps to reproduce the bug"
+      placeholder: |
+        1. Step one
+        2. Step two
+        3. Step three
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Expected Behavior
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior"
+      description: "What you expected to happen"
+      placeholder: "What you expected to happen..."
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Actual Behavior
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual Behavior"
+      description: "What actually happened"
+      placeholder: "What actually happened..."
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Logs
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs"
+      description: "Kernel logs, daemon status, systemd status"
+      render: bash
+      placeholder: |
+        # Kernel logs
+        sudo dmesg -T | grep -i nitro
+
+        # Daemon status
+        nitro status
+
+        # Systemd status
+        systemctl status nitrod.service
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Additional Context
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "Additional Context"
+      description: "Any other information, screenshots, or configuration files"
+      placeholder: "Any other information, screenshots, or configuration files (/etc/nitro.conf, ~/.config/nitro/tui.json)"

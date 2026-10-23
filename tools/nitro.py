@@ -1,9 +1,48 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-import glob, json, os, pathlib, re, select, shlex, shutil, socket, struct, subprocess, sys, time
+import glob
+import json
+import os
+import pathlib
+import re
+import select
+import shlex
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+for _model_path in (
+    "/usr/local/lib/nitro",
+    "/usr/lib/nitro",
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "tools"),
+):
+    if os.path.isdir(_model_path) and _model_path not in sys.path:
+        sys.path.insert(0, _model_path)
+
+from model import (
+    QUIRKS,
+    get_zones,
+    get_effects,
+    get_effect_names,
+    find_platform_profile,
+    CAP_FAN,
+    CAP_FAN_MODE,
+    CAP_HWMON,
+    CAP_PLATFORM_PROFILE,
+    CAP_RGB,
+    CAP_RGB_DYNAMIC,
+    CAP_COOLBOOST,
+    CAP_LED_CLASS,
+)
 
 BASE = pathlib.Path("/sys/devices/platform/nitro")
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
+ZONE_KEYS = get_zones(QUIRKS)
+EFFECTS = get_effects(QUIRKS)
+EFFECT_NAMES = get_effect_names(QUIRKS)
 
 KEY_UNIT = "nitro-key.service"
 EV_KEY = 0x01
@@ -13,6 +52,10 @@ INPUT_EVENT = struct.Struct("@llHHi")
 INPUT_EVENT_CODES = pathlib.Path("/usr/include/linux/input-event-codes.h")
 MODIFIER_KEYS = {29, 42, 54, 56, 97, 100, 125, 126, 464}
 _KEY_NAMES = None
+
+def require_writable():
+    if QUIRKS.probe:
+        raise SystemExit("driver is in probe mode (read-only)")
 
 def read(name):
     try:
@@ -39,22 +82,26 @@ def daemon_set(key, value):
         s.close()
 
 def status():
-    for name in [
-        "fan_cpu",
-        "fan_gpu",
-        "ftbl",
-        "tkst",
-        "opms",
-        "kbd_static",
-        "kbd_dynamic",
-        "kbd_zone1",
-        "coolboost",
-        "ec_cpu_temp"]:
-        print(f"{name}: {read(name)}")
-    for p in ["/sys/class/platform-profile/platform-profile-0/profile"]:
+    attrs = [
+        ("fan_cpu", QUIRKS.has_cap(CAP_FAN)),
+        ("fan_gpu", QUIRKS.has_cap(CAP_FAN) and QUIRKS.fan_count >= 2),
+        ("ftbl", QUIRKS.has_cap(CAP_PLATFORM_PROFILE)),
+        ("tkst", True),
+        ("opms", True),
+        ("kbd_static", QUIRKS.has_cap(CAP_RGB)),
+        ("kbd_dynamic", QUIRKS.has_cap(CAP_RGB_DYNAMIC)),
+        ("kbd_zone1", QUIRKS.has_cap(CAP_RGB)),
+        ("coolboost", QUIRKS.has_cap(CAP_COOLBOOST)),
+        ("ec_cpu_temp", QUIRKS.has_cap(CAP_HWMON)),
+    ]
+    for name, enabled in attrs:
+        if enabled and (BASE / name).is_file():
+            print(f"{name}: {read(name)}")
+    profile_path = find_platform_profile()
+    if profile_path:
         try:
-            print(f"platform_profile: {open(p).read().strip()}")
-        except Exception as e:
+            print(f"platform_profile: {profile_path.read_text().strip()}")
+        except OSError as e:
             print(f"platform_profile: MISSING ({e})")
     print("--- dmesg nitro ---")
     try:
@@ -66,15 +113,24 @@ def status():
         print(f"dmesg failed: {e}")
 
 def set_static(zone, r, g, b):
+    require_writable()
+    if not QUIRKS.has_cap(CAP_RGB):
+        raise SystemExit("RGB not supported on this model")
     zone = int(zone)
-    assert zone in (1, 2, 4, 8), "zone must be 1,2,4,8"
+    if zone not in ZONE_KEYS:
+        raise SystemExit(f"zone must be one of {list(ZONE_KEYS)}")
     for v in (r, g, b):
         assert 0 <= int(v) <= 255
     (BASE / "kbd_static").write_text(f"{zone} {r} {g} {b}")
     print(f"set zone {zone} to {r} {g} {b}: {read('kbd_static')}")
 
 def set_fan(which, duty):
+    require_writable()
+    if not QUIRKS.has_cap(CAP_FAN):
+        raise SystemExit("fan control not supported on this model")
     assert which in ("cpu", "gpu"), "which cpu|gpu"
+    if which == "gpu" and QUIRKS.fan_count < 2:
+        raise SystemExit("GPU fan not supported on this model")
     duty = int(duty)
     assert 0 <= duty <= 100
     if duty < 20:
@@ -83,6 +139,11 @@ def set_fan(which, duty):
     print(f"fan_{which}: {read(f'fan_{which}')}")
 
 def set_coolboost(value):
+    require_writable()
+    if not QUIRKS.has_cap(CAP_COOLBOOST):
+        raise SystemExit("CoolBoost not supported on this model")
+    if not QUIRKS.has_cap(CAP_FAN_MODE):
+        raise SystemExit("CoolBoost requires fan mode support")
     v = str(value).lower()
     assert v in ("on", "off", "1", "0"), "coolboost on|off"
     on = v in ("on", "1")
@@ -101,8 +162,11 @@ def set_coolboost(value):
     print(f"coolboost: {read('coolboost')}")
 
 def set_dyn(mode, speed, brightness, direction, r, g, b):
+    require_writable()
+    if not QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+        raise SystemExit("dynamic RGB not supported on this model")
     for name, v, lo, hi in [
-        ("mode", int(mode), 1, 5),
+        ("mode", int(mode), min(EFFECTS), max(EFFECTS)),
         ("speed", int(speed), 0, 255),
         ("brightness", int(brightness), 0, 100),
         ("direction", int(direction), 1, 2),
@@ -311,10 +375,211 @@ def _dmi(name):
         return ""
 
 
+def _redact(text):
+    text = re.sub(r'\b[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\b', '[UUID]', text, flags=re.I)
+    text = re.sub(r'\b([0-9A-F]{2}:){5}[0-9A-F]{2}\b', '[MAC]', text, flags=re.I)
+    text = re.sub(r'\b\d{10,}\b', '[SERIAL]', text)
+    return text
+
+
+def report():
+    out = []
+    out.append("[nitro-linux report]")
+    out.append(f"version: {_get_version()}")
+    out.append(f"timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    out.append("")
+
+    out.append("[uname]")
+    try:
+        out.append(subprocess.run(["uname", "-r"], capture_output=True, text=True, timeout=3).stdout.strip())
+    except Exception as e:
+        out.append(f"error: {e}")
+    out.append("")
+
+    out.append("[DMI]")
+    for field in [
+        "sys_vendor", "product_name", "board_name", "board_vendor",
+        "bios_version", "bios_date", "chassis_vendor", "chassis_version"]:
+        out.append(f"{field}: {_redact(_dmi(field))}")
+    out.append("")
+
+    out.append("[model]")
+    if QUIRKS.probe:
+        kind = "probe"
+    elif QUIRKS.capabilities:
+        kind = "verified"
+    else:
+        kind = "unknown"
+    out.append(f"detected: {kind}")
+    out.append(f"userspace caps: {QUIRKS.capabilities_string() or 'none'}")
+    out.append("")
+
+    out.append("[WMI]")
+    try:
+        wmi_devs = sorted(os.listdir("/sys/bus/wmi/devices/"))
+        for dev in wmi_devs:
+            modalias_path = f"/sys/bus/wmi/devices/{dev}/modalias"
+            try:
+                modalias = open(modalias_path).read().strip()
+            except OSError:
+                modalias = "unreadable"
+            out.append(f"  {dev}: {modalias}")
+    except OSError:
+        out.append("  (no WMI devices)")
+    out.append("")
+
+    out.append("[nitro sysfs]")
+    if BASE.is_dir():
+        for name in sorted(os.listdir(BASE)):
+            path = BASE / name
+            try:
+                if path.is_dir():
+                    val = "<dir>"
+                else:
+                    val = path.read_text().strip()
+            except OSError as e:
+                val = f"unreadable ({e})"
+            out.append(f"  {name}: {_redact(val)}")
+    else:
+        out.append("  (nitro module not loaded)")
+    out.append("")
+
+    out.append("[platform-profile]")
+    pp_base = pathlib.Path("/sys/class/platform-profile")
+    if pp_base.is_dir():
+        for pp in sorted(pp_base.iterdir()):
+            if pp.name.startswith("platform-profile-"):
+                try:
+                    profile = (pp / "profile").read_text().strip()
+                    choices = (pp / "choices").read_text().strip()
+                    out.append(f"  {pp.name}: profile={profile} choices={choices}")
+                except OSError as e:
+                    out.append(f"  {pp.name}: unreadable ({e})")
+    else:
+        out.append("  (no platform-profile class)")
+    out.append("")
+
+    out.append("[hwmon]")
+    hwmon_base = pathlib.Path("/sys/class/hwmon")
+    if hwmon_base.is_dir():
+        for hm in sorted(hwmon_base.iterdir()):
+            name_file = hm / "name"
+            try:
+                name = name_file.read_text().strip()
+            except OSError:
+                name = "unknown"
+            out.append(f"  {hm.name}: name={name}")
+            for f in sorted(hm.iterdir()):
+                if f.name.startswith(("temp", "fan", "pwm")):
+                    try:
+                        val = f.read_text().strip()
+                        out.append(f"    {f.name}: {_redact(val)}")
+                    except OSError:
+                        pass
+    else:
+        out.append("  (no hwmon class)")
+    out.append("")
+
+    out.append("[LED class]")
+    led_base = pathlib.Path("/sys/class/leds")
+    if led_base.is_dir():
+        for led in sorted(led_base.iterdir()):
+            if "nitro" in led.name.lower() or "rgb" in led.name.lower():
+                try:
+                    brightness = (led / "brightness").read_text().strip()
+                    max_brightness = (led / "max_brightness").read_text().strip()
+                    out.append(f"  {led.name}: brightness={brightness} max={max_brightness}")
+                except OSError:
+                    out.append(f"  {led.name}: unreadable")
+    else:
+        out.append("  (no LED class)")
+    out.append("")
+
+    out.append("[power_supply]")
+    ps_base = pathlib.Path("/sys/class/power_supply")
+    if ps_base.is_dir():
+        for ps in sorted(ps_base.iterdir()):
+            online_file = ps / "online"
+            try:
+                online = online_file.read_text().strip()
+            except OSError:
+                online = "unknown"
+            out.append(f"  {ps.name}: online={online}")
+    else:
+        out.append("  (no power_supply class)")
+    out.append("")
+
+    out.append("[modules]")
+    try:
+        res = subprocess.run(["lsmod"], capture_output=True, text=True, timeout=3)
+        for line in res.stdout.splitlines():
+            if line.startswith("Module ") or re.search(r'nitro|acer|wmi', line, re.I):
+                out.append(line)
+    except Exception as e:
+        out.append(f"error: {e}")
+    out.append("")
+
+    out.append("[dmesg (nitro|acer|wmi)]")
+    try:
+        res = subprocess.run(
+            ["journalctl", "-k", "-b", "-0", "--no-pager"],
+            capture_output=True, text=True, timeout=5)
+        for line in res.stdout.splitlines():
+            if re.search(r'nitro|acer.*wmi|wmi.*acer', line, re.I):
+                out.append(_redact(line[-220:]))
+    except Exception as e:
+        out.append(f"error: {e}")
+    out.append("")
+
+    out.append("[config]")
+    conf = pathlib.Path("/etc/nitro.conf")
+    if conf.is_file():
+        try:
+            out.append(_redact(conf.read_text()))
+        except OSError as e:
+            out.append(f"error: {e}")
+    else:
+        out.append("  /etc/nitro.conf: not found")
+    out.append("")
+
+    out.append("[package]")
+    out.append(_get_version())
+    out.append("")
+
+    print("\n".join(out))
+
+
+def _get_version():
+    try:
+        res = subprocess.run(["pacman", "-Q", "nitro-linux"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            return res.stdout.strip()
+    except Exception:
+        pass
+    try:
+        modinfo = subprocess.run(["modinfo", "nitro"], capture_output=True, text=True, timeout=3)
+        for line in modinfo.stdout.splitlines():
+            if line.startswith("version:"):
+                return f"nitro-linux {line.split(':', 1)[1].strip()} (module)"
+    except Exception:
+        pass
+    try:
+        return f"nitro-linux {pathlib.Path('VERSION').read_text().strip()} (source)"
+    except OSError:
+        return "nitro-linux unknown"
+
+
 def _is_acer_nitro():
     vendor = _dmi("sys_vendor").lower()
     product = _dmi("product_name").lower()
-    return "acer" in vendor and ("nitro" in product or "an515" in product or "an517" in product)
+
+    is_acer = "acer" in vendor
+    is_nitro = (
+        "nitro" in product
+        or "an515" in product
+        or "an517" in product
+    )
+    return is_acer and is_nitro
 
 
 def detect_known_key():
@@ -596,8 +861,7 @@ def _user_environment():
 
 def _launch_command(command):
     subprocess.Popen(
-        command,
-        shell=True,
+        shlex.split(command),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -930,7 +1194,11 @@ def activate_listener():
             print("Service: active (enabled). Press the Nitro key to run the command.")
             print("Desktop shortcuts are unchanged; if another shortcut uses this key, remove it in your desktop settings and run 'nitro key auto' again.")
             return 0
-        if state["load"] in ("unavailable", "unknown") and not _user_manager_running() and enable_unit_offline():
+        load_is_unknown = state["load"] in ("unavailable", "unknown")
+        no_user_manager = not _user_manager_running()
+        can_enable_offline = enable_unit_offline()
+
+        if load_is_unknown and no_user_manager and can_enable_offline:
             remove_autostart()
             print(f"Service: enabled for the next login ({_unit_enable_link()}).")
             print("Desktop shortcuts are unchanged; if another shortcut uses this key, remove it in your desktop settings and run 'nitro key auto' again.")
@@ -1076,7 +1344,8 @@ def key_unbind(args):
     if cfg:
         save_key_config(cfg)
     state = user_service_state()
-    if state["load"] in ("not-found", "unavailable", "unknown"):
+    load_is_missing = state["load"] in ("not-found", "unavailable", "unknown")
+    if load_is_missing:
         had_autostart = autostart_path().is_file()
         remove_autostart()
         if had_autostart:
@@ -1130,6 +1399,7 @@ def usage():
     print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
     print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
     print("               | key [status|auto|find|bind|unbind|listen]")
+    print("               | report")
     print("modes:")
     print("    1 breath")
     print("    2 neon")
@@ -1140,12 +1410,15 @@ def usage():
     print("    sysfs is root-owned, run with sudo for writes,")
     print(f"    e.g. sudo {prog} rgb 1 255 0 0")
     print("    key commands are user-level; do not run them with sudo")
+    print("    report is read-only; run as your user or with sudo for dmesg")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] in ("status",):
         status()
     elif sys.argv[1] in ("help", "-h", "--help"):
         usage()
+    elif sys.argv[1] == "report":
+        report()
     elif sys.argv[1] == "rgb" and len(sys.argv) == 6:
         set_static(*sys.argv[2:6])
     elif sys.argv[1] == "fan" and len(sys.argv) == 4:
@@ -1155,9 +1428,15 @@ if __name__ == "__main__":
     elif sys.argv[1] == "dyn" and len(sys.argv) == 9:
         set_dyn(*sys.argv[2:9])
     elif sys.argv[1] == "profile" and len(sys.argv) == 3:
+        require_writable()
+        if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+            raise SystemExit("platform profile not supported on this model")
         assert sys.argv[2] in ("low-power", "quiet", "balanced", "balanced-performance", "performance"), "bad profile"
-        pathlib.Path("/sys/class/platform-profile/platform-profile-0/profile").write_text(sys.argv[2])
-        print(f"platform_profile: {open('/sys/class/platform-profile/platform-profile-0/profile').read().strip()}")
+        profile_path = find_platform_profile()
+        if profile_path is None:
+            raise SystemExit("platform profile not found")
+        profile_path.write_text(sys.argv[2])
+        print(f"platform_profile: {profile_path.read_text().strip()}")
     elif sys.argv[1] == "key":
         if len(sys.argv) < 3 or sys.argv[2] in ("status",):
             key_status()

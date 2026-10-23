@@ -131,6 +131,7 @@ install -m644 deploy/nitro-apply.service /etc/systemd/system/nitro-apply.service
 install -m755 daemon/nitrod.py /usr/local/bin/nitrod
 install -m755 tui/nitro-linux.py /usr/local/bin/nitro-linux
 install -m755 tools/nitro.py /usr/local/bin/nitro
+install -Dm644 tools/model.py /usr/local/lib/nitro/model.py
 install -Dm644 deploy/nitro-key.service /usr/local/lib/systemd/user/nitro-key.service
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then

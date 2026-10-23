@@ -62,6 +62,8 @@ echo "[*] remove source files"
 disable_key
 rm -f /etc/systemd/system/nitro-apply.service /etc/systemd/system/nitrod.service
 rm -f /usr/local/bin/nitro-apply /usr/local/bin/nitrod /usr/local/bin/nitro-linux /usr/local/bin/nitro
+rm -f /usr/local/lib/nitro/model.py
+rmdir /usr/local/lib/nitro 2>/dev/null || true
 rm -f /usr/local/lib/systemd/user/nitro-key.service
 rm -f /etc/modules-load.d/nitro.conf
 systemctl daemon-reload

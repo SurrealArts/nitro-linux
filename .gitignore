@@ -10,7 +10,7 @@ modules.order
 __pycache__/
 *.pyc
 
-NOTES.local.md
+*.local.md
 windows-captures/
 local-test/
 *.tar.gz

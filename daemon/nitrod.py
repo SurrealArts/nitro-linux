@@ -30,11 +30,38 @@ import threading
 import time
 from glob import glob
 
+for _model_path in (
+    "/usr/local/lib/nitro",
+    "/usr/lib/nitro",
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "tools"),
+):
+    if os.path.isdir(_model_path) and _model_path not in sys.path:
+        sys.path.insert(0, _model_path)
+
+from model import (
+    QUIRKS,
+    get_zones,
+    get_effects,
+    get_effect_names,
+    find_platform_profile,
+    CAP_FAN,
+    CAP_FAN_MODE,
+    CAP_HWMON,
+    CAP_PLATFORM_PROFILE,
+    CAP_RGB,
+    CAP_RGB_DYNAMIC,
+    CAP_COOLBOOST,
+    CAP_LED_CLASS,
+)
+
 UID = os.getuid()
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{UID}")
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
 SYS = os.environ.get("NITRO_SYS", "/sys/devices/platform/nitro")
-PP = os.environ.get("NITRO_PP", "/sys/class/platform-profile/platform-profile-0/profile")
+
+_PP = find_platform_profile()
+PP = str(_PP) if _PP else None
+
 HWMON = os.environ.get("NITRO_HWMON", "/sys/class/hwmon")
 POWER = os.environ.get("NITRO_POWER", "/sys/class/power_supply")
 STATE = os.environ.get("NITRO_STATE", "/var/lib/nitro/state.json")
@@ -44,14 +71,20 @@ POLL = 1.0
 RETENTION = 86400
 
 PROFILES = ("low-power", "quiet", "balanced", "balanced-performance", "performance")
-ZONES = (1, 2, 4, 8)
+ZONES = get_zones(QUIRKS)
+EFFECTS = get_effects(QUIRKS)
+EFFECT_NAMES = get_effect_names(QUIRKS)
 EFFECT_DEFAULTS = {
-    1: (4, (255, 0, 255)),   # breath magenta
-    2: (3, (0, 255, 255)),   # neon cyan
-    3: (5, (0, 128, 255)),   # wave blue
-    4: (5, (128, 0, 255)),   # shifting purple
-    5: (7, (0, 255, 0)),     # zoom green
+    1: (4, (255, 0, 255)),
+    2: (3, (0, 255, 255)),
+    3: (5, (0, 128, 255)),
+    4: (5, (128, 0, 255)),
+    5: (7, (0, 255, 0)),
 }
+EFFECT_DEFAULTS = {k: v for k, v in EFFECT_DEFAULTS.items() if k in EFFECTS}
+
+def pr_err(msg):
+    print(f"ERROR: {msg}", file=sys.stderr)
 
 stop_event = threading.Event()
 start_ts = time.time()
@@ -85,7 +118,6 @@ def coerce_bool(value):
 
 
 def parse_coolboost(value):
-    """Strict control input: bool, 0/1, or on/off."""
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and value in (0, 1):
@@ -110,7 +142,6 @@ def hwmon_find(name):
 
 
 def ac_source():
-    """'ac' | 'battery' | None - derived from the Mains power supply."""
     for t in sorted(glob(f"{POWER}/*/type")):
         if read(t) == "Mains":
             online = read(os.path.join(os.path.dirname(t), "online"))
@@ -120,24 +151,45 @@ def ac_source():
 
 def snapshot():
     d = {}
-    d["fan_cpu_duty"] = read(f"{SYS}/fan_cpu")
-    d["fan_gpu_duty"] = read(f"{SYS}/fan_gpu")
-    d["ftbl"] = read(f"{SYS}/ftbl")
-    d["tkst"] = read(f"{SYS}/tkst")
-    d["opms"] = read(f"{SYS}/opms")
-    d["kbd_static"] = read(f"{SYS}/kbd_static")
-    d["kbd_dynamic"] = read(f"{SYS}/kbd_dynamic")
-    d["kbd_bright"] = read(f"{SYS}/kbd_bright")
-    d["fan_mode"] = read(f"{SYS}/fan_mode")
-    d["coolboost"] = read(f"{SYS}/coolboost")
-    d["ec_cpu_temp"] = read(f"{SYS}/ec_cpu_temp")
-    d["profile"] = read(PP)
-    n = hwmon_find("nitro")
-    if n:
-        d["cpu_rpm"] = read(f"{n}/fan1_input")
-        d["gpu_rpm"] = read(f"{n}/fan2_input")
-        t = read(f"{n}/temp1_input")
-        d["ec_c"] = (int(t) / 1000.0) if t and t.lstrip("-").isdigit() else None
+    has_fan = QUIRKS.has_cap(CAP_FAN)
+    has_fan_mode = QUIRKS.has_cap(CAP_FAN_MODE)
+    has_profile = QUIRKS.has_cap(CAP_PLATFORM_PROFILE)
+    has_rgb = QUIRKS.has_cap(CAP_RGB)
+    has_dyn = QUIRKS.has_cap(CAP_RGB_DYNAMIC)
+    has_cool = QUIRKS.has_cap(CAP_COOLBOOST)
+    has_hwmon = QUIRKS.has_cap(CAP_HWMON)
+
+    if has_fan:
+        d["fan_cpu_duty"] = read(f"{SYS}/fan_cpu")
+        if QUIRKS.fan_count >= 2:
+            d["fan_gpu_duty"] = read(f"{SYS}/fan_gpu")
+    if has_fan_mode:
+        d["fan_mode"] = read(f"{SYS}/fan_mode")
+    if has_cool:
+        d["coolboost"] = read(f"{SYS}/coolboost")
+    if has_profile:
+        d["ftbl"] = read(f"{SYS}/ftbl")
+        d["profile"] = read(PP) if PP else None
+    if os.path.exists(f"{SYS}/tkst"):
+        d["tkst"] = read(f"{SYS}/tkst")
+    if os.path.exists(f"{SYS}/opms"):
+        d["opms"] = read(f"{SYS}/opms")
+    if has_rgb:
+        d["kbd_static"] = read(f"{SYS}/kbd_static")
+        d["kbd_bright"] = read(f"{SYS}/kbd_bright")
+    if has_dyn:
+        d["kbd_dynamic"] = read(f"{SYS}/kbd_dynamic")
+    if has_hwmon:
+        d["ec_cpu_temp"] = read(f"{SYS}/ec_cpu_temp")
+
+    n = None
+    if has_hwmon:
+        n = hwmon_find("nitro")
+        if n:
+            d["cpu_rpm"] = read(f"{n}/fan1_input")
+            d["gpu_rpm"] = read(f"{n}/fan2_input")
+            t = read(f"{n}/temp1_input")
+            d["ec_c"] = (int(t) / 1000.0) if t and t.lstrip("-").isdigit() else None
     c = hwmon_find("coretemp")
     if c:
         t = read(f"{c}/temp1_input")
@@ -150,33 +202,48 @@ def snapshot():
         d["gpu_c"] = float(t) if t.replace(".", "", 1).isdigit() else None
     except Exception:
         d["gpu_c"] = None
-    d["driver"] = "ok" if d["fan_cpu_duty"] is not None else "missing"
+    has_fan_data = has_fan and d.get("fan_cpu_duty") is not None
+    has_hwmon_data = has_hwmon and n
+    d["driver"] = "ok" if has_fan_data or has_hwmon_data else "missing"
     return d
 
 
 def default_state():
-    return {
-        "mode": "static",
-        "static": {str(z): {"rgb": [255, 255, 255], "on": True} for z in ZONES},
-        "brightness": 100,
-        "dynamic": {
+    has_rgb = QUIRKS.has_cap(CAP_RGB)
+    has_dyn = QUIRKS.has_cap(CAP_RGB_DYNAMIC)
+    has_cool = QUIRKS.has_cap(CAP_COOLBOOST)
+    has_profile = QUIRKS.has_cap(CAP_PLATFORM_PROFILE)
+
+    static = {}
+    if has_rgb:
+        static = {str(z): {"rgb": [255, 255, 255], "on": True} for z in ZONES}
+
+    dynamic = {}
+    if has_dyn:
+        dynamic = {
             "mode": 1,
             "effects": {
                 str(m): {"speed": sp, "direction": 1, "r": r, "g": g, "b": b}
                 for m, (sp, (r, g, b)) in EFFECT_DEFAULTS.items()
+                if m in EFFECTS
             },
-        },
+        }
+
+    return {
+        "mode": "dynamic" if has_dyn else "static",
+        "static": static,
+        "brightness": 100,
+        "dynamic": dynamic,
         "fan_cpu": 50,
         "fan_gpu": 50,
         "fan_mode": {"cpu": "custom", "gpu": "custom"},
-        "coolboost": False,
-        "profile_ac": "balanced",
-        "profile_battery": "low-power",
+        "coolboost": False if has_cool else None,
+        "profile_ac": "balanced" if has_profile else None,
+        "profile_battery": "low-power" if has_profile else None,
     }
 
 
 def migrate(raw):
-    """Normalise any older state layout into the current one."""
     s = default_state()
     if "profile_ac" not in raw and "profile" in raw:
         raw["profile_ac"] = raw["profile_battery"] = raw["profile"]
@@ -192,7 +259,7 @@ def migrate(raw):
                 st[str(z)] = {"rgb": rgb, "on": bool(v.get("on", any(rgb)))}
         s["static"] = st
     dy = raw.get("dynamic")
-    if isinstance(dy, dict):
+    if isinstance(dy, dict) and s["dynamic"].get("effects"):
         if isinstance(dy.get("effects"), dict):
             for k, v in dy["effects"].items():
                 if k in s["dynamic"]["effects"] and isinstance(v, dict):
@@ -203,13 +270,13 @@ def migrate(raw):
                 m = int(dy.get("mode", 1))
             except (TypeError, ValueError):
                 m = 1
-            s["dynamic"]["mode"] = m if 1 <= m <= 5 else 1
+            s["dynamic"]["mode"] = m if m in EFFECTS else 1
         else:
             try:
                 cur = int(dy.get("mode", 1))
             except (TypeError, ValueError):
                 cur = 1
-            if cur not in EFFECT_DEFAULTS:
+            if cur not in EFFECTS:
                 cur = 1
             e = s["dynamic"]["effects"][str(cur)]
             for kk in ("speed", "direction", "r", "g", "b"):
@@ -221,20 +288,28 @@ def migrate(raw):
     for k in ("mode", "brightness", "fan_cpu", "fan_gpu", "profile_ac", "profile_battery"):
         if k in raw:
             s[k] = raw[k]
+    if not QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+        s["mode"] = "static"
     fm = raw.get("fan_mode")
     if isinstance(fm, dict):
         for k in ("cpu", "gpu"):
             if fm.get(k) in ("auto", "max", "custom"):
                 s["fan_mode"][k] = fm[k]
-    cb = coerce_bool(raw.get("coolboost"))
-    if cb is not None:
-        s["coolboost"] = cb
+    if QUIRKS.has_cap(CAP_COOLBOOST):
+        cb = coerce_bool(raw.get("coolboost"))
+        if cb is not None:
+            s["coolboost"] = cb
+    else:
+        s["coolboost"] = None
     if s.get("mode") not in ("static", "dynamic"):
         s["mode"] = "static"
-    if s.get("profile_ac") not in PROFILES:
-        s["profile_ac"] = "balanced"
-    if s.get("profile_battery") not in PROFILES:
-        s["profile_battery"] = "low-power"
+    if QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+        if s.get("profile_ac") not in PROFILES:
+            s["profile_ac"] = "balanced"
+        if s.get("profile_battery") not in PROFILES:
+            s["profile_battery"] = "low-power"
+    else:
+        s["profile_ac"] = s["profile_battery"] = None
     try:
         s["brightness"] = max(0, min(100, int(s.get("brightness", 100))))
     except (TypeError, ValueError):
@@ -254,7 +329,7 @@ def load_state():
         if not isinstance(raw, dict):
             return None
         return migrate(raw)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return None
 
 
@@ -270,35 +345,45 @@ def adopt_current(s):
     snap = snapshot()
     if snap["driver"] != "ok":
         return False
-    try:
-        parts = snap["kbd_static"].replace(":", " ").split()
-        vals = [int(x) for x in parts if x.lstrip("-").isdigit()]
-        for i in range(0, len(vals) - 3, 4):
-            z = vals[i]
-            if z in ZONES:
-                rgb = vals[i + 1:i + 4]
-                s["static"][str(z)] = {"rgb": rgb, "on": any(rgb)}
-    except (TypeError, ValueError, IndexError):
-        pass
-    try:
-        s["fan_cpu"] = int(snap["fan_cpu_duty"])
-        s["fan_gpu"] = int(snap["fan_gpu_duty"])
-    except (TypeError, ValueError):
-        pass
-    for part in (snap.get("fan_mode") or "").split():
-        k, _, v = part.partition("=")
-        if k in ("cpu", "gpu") and v in ("auto", "max", "custom"):
-            s["fan_mode"][k] = v
-    cb = coerce_bool(snap.get("coolboost"))
-    if cb is not None:
-        s["coolboost"] = cb
-    try:
-        s["brightness"] = int(snap["kbd_bright"])
-    except (TypeError, ValueError):
-        pass
-    if snap["profile"] in PROFILES:
-        s["profile_ac"] = snap["profile"]
-        s["profile_battery"] = snap["profile"]
+    if QUIRKS.has_cap(CAP_RGB):
+        try:
+            parts = snap["kbd_static"].replace(":", " ").split()
+            vals = [int(x) for x in parts if x.lstrip("-").isdigit()]
+            for i in range(0, len(vals) - 3, 4):
+                z = vals[i]
+                if z in ZONES:
+                    rgb = vals[i + 1:i + 4]
+                    s["static"][str(z)] = {"rgb": rgb, "on": any(rgb)}
+        except (TypeError, ValueError, IndexError):
+            pass
+    if QUIRKS.has_cap(CAP_FAN):
+        try:
+            s["fan_cpu"] = int(snap["fan_cpu_duty"])
+        except (TypeError, ValueError):
+            pass
+        if QUIRKS.fan_count >= 2:
+            try:
+                s["fan_gpu"] = int(snap["fan_gpu_duty"])
+            except (TypeError, ValueError):
+                pass
+    if QUIRKS.has_cap(CAP_FAN_MODE):
+        for part in (snap.get("fan_mode") or "").split():
+            k, _, v = part.partition("=")
+            if k in ("cpu", "gpu") and v in ("auto", "max", "custom"):
+                s["fan_mode"][k] = v
+    if QUIRKS.has_cap(CAP_COOLBOOST):
+        cb = coerce_bool(snap.get("coolboost"))
+        if cb is not None:
+            s["coolboost"] = cb
+    if QUIRKS.has_cap(CAP_RGB):
+        try:
+            s["brightness"] = int(snap["kbd_bright"])
+        except (TypeError, ValueError):
+            pass
+    if QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+        if snap["profile"] in PROFILES:
+            s["profile_ac"] = snap["profile"]
+            s["profile_battery"] = snap["profile"]
     return True
 
 
@@ -310,6 +395,12 @@ def dyn_payload(s):
 
 
 def apply_profile(s):
+    if QUIRKS.probe:
+        return True
+    if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+        return True
+    if not PP:
+        return False
     src = ac_source()
     prof = s["profile_battery"] if src == "battery" else s["profile_ac"]
     if prof in PROFILES:
@@ -319,33 +410,46 @@ def apply_profile(s):
 
 
 def apply_fans(s):
+    if QUIRKS.probe:
+        return True
+    if not QUIRKS.has_cap(CAP_FAN) or not QUIRKS.has_cap(CAP_FAN_MODE):
+        return True
     fm = s.get("fan_mode") or {}
     cpu_m = fm.get("cpu", "custom")
     gpu_m = fm.get("gpu", "custom")
-    write(f"{SYS}/fan_mode", f"cpu={cpu_m} gpu={gpu_m}")
+    if QUIRKS.fan_count >= 2:
+        write(f"{SYS}/fan_mode", f"cpu={cpu_m} gpu={gpu_m}")
+    else:
+        write(f"{SYS}/fan_mode", f"cpu={cpu_m}")
     if cpu_m == "custom":
         write(f"{SYS}/fan_cpu", s["fan_cpu"])
-    if gpu_m == "custom":
+    if QUIRKS.fan_count >= 2 and gpu_m == "custom":
         write(f"{SYS}/fan_gpu", s["fan_gpu"])
 
 
 def apply_coolboost(s):
-    """Write CoolBoost only when the desired fan mode is auto.
-
-    The driver refuses writes in max/custom; the retained value is left alone.
-    """
+    if QUIRKS.probe:
+        return True
+    if not QUIRKS.has_cap(CAP_COOLBOOST):
+        return True
     path = f"{SYS}/coolboost"
     if not os.path.exists(path):
         return False
     fm = s.get("fan_mode") or {}
-    if fm.get("cpu") != "auto" or fm.get("gpu") != "auto":
+    if fm.get("cpu") != "auto":
+        return False
+    if QUIRKS.fan_count >= 2 and fm.get("gpu") != "auto":
         return False
     write(path, 1 if s.get("coolboost") else 0)
     return True
 
 
 def apply_kbd(s):
-    if s.get("mode") == "dynamic":
+    if QUIRKS.probe:
+        return True
+    if not QUIRKS.has_cap(CAP_RGB):
+        return True
+    if s.get("mode") == "dynamic" and QUIRKS.has_cap(CAP_RGB_DYNAMIC):
         write(f"{SYS}/kbd_dynamic", dyn_payload(s))
     else:
         write(f"{SYS}/kbd_bright", s["brightness"])
@@ -356,20 +460,42 @@ def apply_kbd(s):
 
 
 def apply_all(s):
+    if QUIRKS.probe:
+        return True
     if snapshot()["driver"] != "ok":
         return False
-    try:
-        apply_profile(s)
-        apply_fans(s)
-        apply_coolboost(s)
-        apply_kbd(s)
-        return True
-    except (OSError, KeyError, ValueError):
-        return False
+    results = []
+    if QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+        try:
+            apply_profile(s)
+            results.append(("profile", True))
+        except (OSError, KeyError, ValueError) as e:
+            results.append(("profile", False))
+            pr_err(f"apply_profile failed: {e}")
+    if QUIRKS.has_cap(CAP_FAN) and QUIRKS.has_cap(CAP_FAN_MODE):
+        try:
+            apply_fans(s)
+            results.append(("fans", True))
+        except (OSError, KeyError, ValueError) as e:
+            results.append(("fans", False))
+            pr_err(f"apply_fans failed: {e}")
+    if QUIRKS.has_cap(CAP_COOLBOOST):
+        try:
+            results.append(("coolboost", apply_coolboost(s)))
+        except (OSError, KeyError, ValueError) as e:
+            results.append(("coolboost", False))
+            pr_err(f"apply_coolboost failed: {e}")
+    if QUIRKS.has_cap(CAP_RGB):
+        try:
+            apply_kbd(s)
+            results.append(("keyboard", True))
+        except (OSError, KeyError, ValueError) as e:
+            results.append(("keyboard", False))
+            pr_err(f"apply_kbd failed: {e}")
+    return any(ok for _, ok in results)
 
 
 def apply_changed_profile(s):
-    """Called when the power source changes while running."""
     try:
         apply_profile(s)
     except OSError:
@@ -427,7 +553,7 @@ def cmd_history(arg):
 def chk_zone(z):
     z = int(z)
     if z not in ZONES:
-        raise ValueError("zone must be 1,2,4,8")
+        raise ValueError(f"zone must be one of {list(ZONES)}")
     return z
 
 
@@ -440,8 +566,14 @@ def chk_rgb(v):
 
 def cmd_set(arg):
     key = arg.get("key")
+    if QUIRKS.probe:
+        return {"ok": False, "err": "driver is in probe mode (read-only)"}
     with state_lock:
         if key in ("fan_cpu", "fan_gpu"):
+            if not QUIRKS.has_cap(CAP_FAN):
+                return {"ok": False, "err": "fan control not supported on this model"}
+            if key == "fan_gpu" and QUIRKS.fan_count < 2:
+                return {"ok": False, "err": "GPU fan not supported on this model"}
             v = int(arg["value"])
             if not 0 <= v <= 100:
                 return {"ok": False, "err": "duty 0-100"}
@@ -449,6 +581,8 @@ def cmd_set(arg):
             state[key] = v
             state["fan_mode"]["cpu" if key == "fan_cpu" else "gpu"] = "custom"
         elif key == "fan_mode":
+            if not QUIRKS.has_cap(CAP_FAN_MODE):
+                return {"ok": False, "err": "fan mode not supported on this model"}
             m = str(arg["value"])
             if m not in ("auto", "max", "custom"):
                 return {"ok": False, "err": "mode auto|max|custom"}
@@ -456,6 +590,10 @@ def cmd_set(arg):
             state["fan_mode"]["cpu"] = m
             state["fan_mode"]["gpu"] = m
         elif key in ("fan_cpu_mode", "fan_gpu_mode"):
+            if not QUIRKS.has_cap(CAP_FAN_MODE):
+                return {"ok": False, "err": "fan mode not supported on this model"}
+            if key == "fan_gpu_mode" and QUIRKS.fan_count < 2:
+                return {"ok": False, "err": "GPU fan not supported on this model"}
             m = str(arg["value"])
             if m not in ("auto", "max", "custom"):
                 return {"ok": False, "err": "mode auto|max|custom"}
@@ -463,18 +601,26 @@ def cmd_set(arg):
             write(f"{SYS}/fan_mode", f"{which}={m} {other}={state['fan_mode'][other]}")
             state["fan_mode"][which] = m
         elif key == "coolboost":
+            if not QUIRKS.has_cap(CAP_COOLBOOST):
+                return {"ok": False, "err": "coolboost not supported on this model"}
+            if not QUIRKS.has_cap(CAP_FAN_MODE):
+                return {"ok": False, "err": "CoolBoost requires fan mode support"}
             on = parse_coolboost(arg.get("value"))
             if on is None:
                 return {"ok": False, "err": "coolboost on|off"}
             write(f"{SYS}/coolboost", 1 if on else 0)
             state["coolboost"] = on
         elif key in ("brightness", "kbd_bright"):
+            if not QUIRKS.has_cap(CAP_RGB):
+                return {"ok": False, "err": "RGB not supported on this model"}
             v = int(arg["value"])
             if not 0 <= v <= 100:
                 return {"ok": False, "err": "brightness 0-100"}
             write(f"{SYS}/kbd_bright", v)
             state["brightness"] = v
         elif key == "static":
+            if not QUIRKS.has_cap(CAP_RGB):
+                return {"ok": False, "err": "RGB not supported on this model"}
             z = chk_zone(arg["zone"])
             r, g, b = chk_rgb(arg["r"]), chk_rgb(arg["g"]), chk_rgb(arg["b"])
             zz = state["static"][str(z)]
@@ -483,6 +629,8 @@ def cmd_set(arg):
                 write(f"{SYS}/kbd_static", f"{z} {r} {g} {b}")
                 state["mode"] = "static"
         elif key == "static_on":
+            if not QUIRKS.has_cap(CAP_RGB):
+                return {"ok": False, "err": "RGB not supported on this model"}
             z = chk_zone(arg["zone"])
             on = bool(arg["on"])
             zz = state["static"][str(z)]
@@ -493,21 +641,23 @@ def cmd_set(arg):
             write(f"{SYS}/kbd_static", f"{z} {r} {g} {b}")
             state["mode"] = "static"
         elif key == "dynamic":
+            if not QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+                return {"ok": False, "err": "dynamic RGB not supported on this model"}
             d = state["dynamic"]
             cur = str(d["mode"])
             e = d["effects"][cur]
             changed = False
             if "mode" in arg:
                 m = int(arg["mode"])
-                if not 1 <= m <= 5:
-                    return {"ok": False, "err": "mode 1-5"}
+                if m not in EFFECTS:
+                    return {"ok": False, "err": f"mode {min(EFFECTS)}-{max(EFFECTS)}"}
                 d["mode"] = m
                 e = d["effects"][str(m)]
                 changed = True
             if "speed" in arg:
                 v = int(arg["speed"])
-                if not 1 <= v <= 10:
-                    return {"ok": False, "err": "speed 1-10"}
+                if not 0 <= v <= 255:
+                    return {"ok": False, "err": "speed 0-255"}
                 e["speed"] = v
                 changed = True
             if "direction" in arg:
@@ -528,9 +678,15 @@ def cmd_set(arg):
             m = str(arg["value"])
             if m not in ("static", "dynamic"):
                 return {"ok": False, "err": "mode static|dynamic"}
+            if m == "dynamic" and not QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+                return {"ok": False, "err": "dynamic RGB not supported on this model"}
             state["mode"] = m
             apply_kbd(state)
         elif key in ("profile_ac", "profile_battery"):
+            if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+                return {"ok": False, "err": "platform profile not supported on this model"}
+            if not PP:
+                return {"ok": False, "err": "platform profile not found"}
             v = str(arg["value"])
             if v not in PROFILES:
                 return {"ok": False, "err": "bad profile"}
@@ -559,14 +715,11 @@ def handle(line):
             return cmd_set(msg)
         if cmd == "reapply":
             with state_lock:
-                ok = apply_all(state)
-            return {"ok": ok}
-        if cmd == "stop":
-            stop_event.set()
-            return {"ok": True}
-        return {"ok": False, "err": "unknown cmd"}
-    except (OSError, ValueError, KeyError) as e:
+                apply_all(state)
+            return cmd_status(None)
+    except Exception as e:
         return {"ok": False, "err": str(e)}
+    return {"ok": False, "err": "unknown command"}
 
 
 def serve():
@@ -574,32 +727,20 @@ def serve():
         os.unlink(SOCK)
     except OSError:
         pass
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(SOCK)
-    try:
-        os.chmod(SOCK, 0o666)
-    except OSError:
-        pass
-    srv.listen(8)
-    srv.settimeout(0.5)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCK)
+    os.chmod(SOCK, 0o660)
+    server.listen(5)
+    print(f"nitrod listening on {SOCK}")
     while not stop_event.is_set():
         try:
-            conn, _ = srv.accept()
-        except socket.timeout:
-            continue
-        with conn:
-            try:
-                data = b""
-                while not data.endswith(b"\n"):
-                    chunk = conn.recv(4096)
-                    if not chunk:
-                        break
-                    data += chunk
-                if data:
-                    conn.sendall((json.dumps(handle(data.decode())) + "\n").encode())
-            except OSError:
-                pass
-    srv.close()
+            client, _ = server.accept()
+            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+        except OSError:
+            if stop_event.is_set():
+                break
+            raise
+    server.close()
     try:
         os.unlink(SOCK)
     except OSError:
@@ -609,25 +750,27 @@ def serve():
 def main():
     global state
     con = db()
-    con.execute("DELETE FROM samples WHERE ts < ?", (int(time.time()) - RETENTION,))
-    con.commit()
-    for _ in range(30):
-        if snapshot()["driver"] == "ok":
-            break
-        time.sleep(1)
+    try:
+        con.execute("DELETE FROM samples WHERE ts < ?",
+                    (int(time.time()) - RETENTION,))
+        con.commit()
+    except sqlite3.Error:
+        pass
+    if not QUIRKS.probe:
+        for _ in range(30):
+            if snapshot()["driver"] == "ok":
+                break
+            time.sleep(1)
     state = load_state()
     if state is None:
         state = default_state()
-        if adopt_current(state):
-            save_state(state)
-        else:
+        if not adopt_current(state):
             apply_all(state)
-            save_state(state)
     else:
-        save_state(state)
         apply_all(state)
-    t = threading.Thread(target=serve, daemon=True)
-    t.start()
+    save_state(state)
+
+    threading.Thread(target=serve, daemon=True).start()
     last_prune = time.time()
     last_src = ac_source()
     while not stop_event.is_set():
@@ -640,20 +783,20 @@ def main():
         if s["driver"] == "ok":
             try:
                 con.execute(
-                    "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?)", (
-                        int(time.time()), s.get("package_c"), s.get("ec_c"),
-                        s.get("gpu_c"),
-                        float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
-                        float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
-                        float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
-                        float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None)
-                    )
+                    "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?)",
+                    (int(time.time()), s.get("package_c"), s.get("ec_c"),
+                     s.get("gpu_c"),
+                     float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
+                     float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
+                     float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
+                     float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None))
                 con.commit()
             except (sqlite3.Error, ValueError, TypeError):
                 pass
         if time.time() - last_prune > 3600:
             try:
-                con.execute("DELETE FROM samples WHERE ts < ?", (int(time.time()) - RETENTION,))
+                con.execute("DELETE FROM samples WHERE ts < ?",
+                            (int(time.time()) - RETENTION,))
                 con.commit()
             except sqlite3.Error:
                 pass
@@ -662,5 +805,28 @@ def main():
     con.close()
 
 
+MAX_PAYLOAD = 65536
+
+def handle_client(client):
+    try:
+        data = b""
+        while not data.endswith(b"\n"):
+            if len(data) > MAX_PAYLOAD:
+                return
+            chunk = client.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        if not data:
+            return
+        msg = json.loads(data.decode())
+        response = handle(json.dumps(msg))
+        client.sendall((json.dumps(response) + "\n").encode())
+    except Exception:
+        pass
+    finally:
+        client.close()
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

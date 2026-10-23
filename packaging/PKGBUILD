@@ -2,7 +2,7 @@
 pkgname=nitro-linux
 pkgver=2.2.1
 pkgrel=1
-pkgdesc='Acer Nitro AN515-57 kernel driver, daemon, and TUI'
+pkgdesc='Acer Nitro kernel driver, daemon, and TUI'
 arch=('x86_64')
 url='https://github.com/SurrealArts/nitro-linux'
 license=('GPL-3.0-or-later')
@@ -23,6 +23,7 @@ package() {
   install -Dm755 "$src/tools/nitro.py" "$pkgdir/usr/bin/nitro"
   install -Dm755 "$src/tui/nitro-linux.py" "$pkgdir/usr/bin/nitro-linux"
   install -Dm755 "$src/daemon/nitrod.py" "$pkgdir/usr/bin/nitrod"
+  install -Dm644 "$src/tools/model.py" "$pkgdir/usr/lib/nitro/model.py"
   install -Dm755 "$src/deploy/nitro-apply" "$pkgdir/usr/bin/nitro-apply"
 
   install -Dm644 "$src/deploy/nitro-modules.conf" "$pkgdir/etc/modules-load.d/nitro.conf"

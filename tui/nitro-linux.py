@@ -28,6 +28,7 @@ import os
 import socket
 import subprocess
 import sys
+import syslog
 import time
 from collections import deque
 
@@ -51,10 +52,34 @@ def project_version():
 
 PROJECT_VERSION = project_version()
 
+for _model_path in (
+    "/usr/local/lib/nitro",
+    "/usr/lib/nitro",
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "tools"),
+):
+    if os.path.isdir(_model_path) and _model_path not in sys.path:
+        sys.path.insert(0, _model_path)
+
+from model import (
+    QUIRKS,
+    get_zones,
+    get_effects,
+    get_effect_names,
+    CAP_FAN,
+    CAP_FAN_MODE,
+    CAP_HWMON,
+    CAP_PLATFORM_PROFILE,
+    CAP_RGB,
+    CAP_RGB_DYNAMIC,
+    CAP_COOLBOOST,
+    CAP_LED_CLASS,
+)
+
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
 CFG = os.environ.get("NITRO_TUI_CFG", os.path.expanduser("~/.config/nitro/tui.json"))
-ZONE_KEYS = (1, 2, 4, 8)
-EFFECTS = {1: "breath", 2: "neon", 3: "wave", 4: "shifting", 5: "zoom"}
+ZONE_KEYS = get_zones(QUIRKS)
+EFFECTS = get_effects(QUIRKS)
+EFFECT_NAMES = get_effect_names(QUIRKS)
 EFFECT_NEEDS = {
     1: ("speed", "bright", "colour"),
     2: ("speed", "bright"),
@@ -62,6 +87,7 @@ EFFECT_NEEDS = {
     4: ("speed", "bright", "colour", "direction"),
     5: ("speed", "bright", "colour"),
 }
+EFFECT_NEEDS = {k: v for k, v in EFFECT_NEEDS.items() if k in EFFECTS}
 PLANS = [
     ("Power Saver", "low-power"),
     ("Quiet", "quiet"),
@@ -78,6 +104,13 @@ SWATCHES = [
 ]
 REFRESH_MIN, REFRESH_MAX, REFRESH_STEP = 100, 5000, 100
 PLAN_NAMES = dict((val, name) for name, val in PLANS)
+
+
+def log_unavailable(feature: str, reason: str = "capability missing"):
+    try:
+        syslog.syslog(syslog.LOG_INFO, f"nitro-linux: {feature} unavailable - {reason}")
+    except Exception:
+        pass
 
 
 def clamp_refresh(ms):
@@ -521,7 +554,7 @@ class UI:
 
     def fan_sel(self):
         fm = parse_fan_modes(self.live.get("fan_mode"))
-        if fm["cpu"] and fm["cpu"] == fm["gpu"]:
+        if fm["cpu"] and (QUIRKS.fan_count < 2 or fm["cpu"] == fm["gpu"]):
             return fm["cpu"]
         return None
 
@@ -649,7 +682,7 @@ class UI:
     def set_effect(self, m):
         self.send(
             {"cmd": "set", "key": "dynamic", "mode": m},
-            f"effect → {EFFECTS[m]}")
+            f"effect → {EFFECT_NAMES[m]}")
 
     def set_dyn(self, note, **kw):
         self.send({"cmd": "set", "key": "dynamic", **kw}, note)
@@ -682,6 +715,11 @@ class UI:
         w = self.w
         self.addstr(0, 1, "N I T R O - L I N U X", curses.color_pair(C.ACC) | curses.A_BOLD)
         x = 23
+        if QUIRKS.probe:
+            self.addstr(
+                0, x, "PROBE / READ-ONLY",
+                curses.color_pair(C.HOT) | curses.A_BOLD)
+            x += 18
         if self.live.get("driver") not in (None, "ok"):
             self.addstr(0, x, "driver missing", curses.color_pair(C.HOT) | curses.A_BOLD)
         if self.msg:
@@ -721,24 +759,57 @@ class UI:
             self.need_msg(120, 47)
             return
         self.h, self.w = h, w
-        ym = 1 + (h - 1) // 2                  # gap row between the two panel rows
-        lw = max(34, min(38, w // 3))          # left column width
-        rw = w - 1 - lw                        # right column width
-        w2 = max(46, rw * 11 // 20)            # keyboard width
-        w2 = min(w2, max(30, rw - 27))         # keep thermal >= 26
-        w1 = rw - 1 - w2                       # thermal width
-        ht = ym - 1                            # top row height
-        hb = h - ym                            # bottom row height (+1: consume gap row)
+        ym = 1 + (h - 1) // 2
+        lw = max(34, min(38, w // 3))
+        rw = w - 1 - lw
+        w2 = max(46, rw * 11 // 20)
+        w2 = min(w2, max(30, rw - 27))
+        w1 = rw - 1 - w2
+        ht = ym - 1
+        hb = h - ym
+        has_fan = QUIRKS.has_cap(CAP_FAN)
+        has_fan_mode = QUIRKS.has_cap(CAP_FAN_MODE)
+        has_profile = QUIRKS.has_cap(CAP_PLATFORM_PROFILE)
+        has_thermal = QUIRKS.has_cap(CAP_HWMON)
+        has_rgb = QUIRKS.has_cap(CAP_RGB)
+        has_dyn = QUIRKS.has_cap(CAP_RGB_DYNAMIC)
+        has_cool = QUIRKS.has_cap(CAP_COOLBOOST)
+
         self.box(1, 0, ht, lw, "FAN CONTROL")
         self.box(1, lw + 1, ht, rw, "FAN MONITOR")
+
         self.box(ym, 0, hb, lw, "POWER PLAN")
-        self.box(ym, lw + 1, hb, w1, "THERMAL")
-        self.box(ym, lw + 2 + w1, hb, w2, "KEYBOARD")
+
+        right_x = lw + 1
+        right_w = rw
+        w2 = max(46, right_w * 11 // 20)
+        w2 = min(w2, max(30, right_w - 27))
+        w1 = right_w - 1 - w2
+        self.box(ym, right_x, hb, w1, "THERMAL")
+        self.box(ym, right_x + 1 + w1, hb, w2, "KEYBOARD")
+
         self.draw_fan_control(1, 0, ht, lw)
         self.draw_fan_monitor(1, lw + 1, ht, rw)
         self.draw_power(ym, 0, hb, lw)
-        self.draw_thermal(ym, lw + 1, hb, w1)
-        self.draw_keyboard(ym, lw + 2 + w1, hb, w2)
+        self.draw_thermal(ym, right_x, hb, w1)
+        self.draw_keyboard(ym, right_x + 1 + w1, hb, w2)
+
+        if not hasattr(self, '_unavailable_logged'):
+            self._unavailable_logged = True
+            if not has_fan:
+                log_unavailable("Fan Control", "CAP_FAN missing")
+            if not has_fan_mode:
+                log_unavailable("Fan Monitor", "CAP_FAN_MODE missing")
+            if not has_profile:
+                log_unavailable("Power Plan", "CAP_PLATFORM_PROFILE missing")
+            if not has_thermal:
+                log_unavailable("Thermal Monitoring", "CAP_HWMON missing")
+            if not has_rgb:
+                log_unavailable("Keyboard RGB", "CAP_RGB missing")
+            if not has_dyn:
+                log_unavailable("Dynamic Effects", "CAP_RGB_DYNAMIC missing")
+            if not has_cool:
+                log_unavailable("CoolBoost", "CAP_COOLBOOST missing")
         self.topbar()
         if self.editor or self.show_help or self.confirm_stop:
             try:
@@ -768,7 +839,15 @@ class UI:
                 pass
         s.refresh()
 
-    def draw_coolboost(self, y, px, cur):
+    def draw_coolboost(self, y, px, cur, pw=None):
+        if not QUIRKS.has_cap(CAP_COOLBOOST):
+            text = "CoolBoost unavailable"
+            x = px + 1
+            if pw:
+                inner_w = pw - 2
+                x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         on = self.coolboost_live()
         if on is None:
             label = "(i) CoolBoost  --"
@@ -790,6 +869,13 @@ class UI:
         self.click(y, x, 1, len(text), ("coolboost",))
 
     def draw_fan_control(self, py, px, ph, pw):
+        if not QUIRKS.has_cap(CAP_FAN):
+            text = "Fan control unavailable"
+            inner_w = pw - 2
+            x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            y = py + ph // 2
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         x = px + 2
         ylim = py + ph - 1
         bw = pw - 4
@@ -798,10 +884,11 @@ class UI:
         for i, (m, name) in enumerate(FAN_MODES):
             if y + 3 > ylim:
                 break
-            self.button(y, x, bw, f"({FAN_KEYS[i]}/{FAN_KEYS[i].lower()}) {name}",
-                        active=(cur == m), action=("fanmode", m))
+            self.button(
+                y, x, bw, f"({FAN_KEYS[i]}/{FAN_KEYS[i].lower()}) {name}",
+                active=(cur == m), action=("fanmode", m))
             y += 4
-        self.draw_coolboost(py + 15, px, cur)
+        self.draw_coolboost(py + 15, px, cur, pw)
         cy = ylim - 1
         if cy - 1 > y:
             pre = "Created by "
@@ -815,6 +902,13 @@ class UI:
             self.addstr(cy, x, f"v{PROJECT_VERSION}", curses.color_pair(C.DIM))
 
     def draw_power(self, py, px, ph, pw):
+        if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
+            text = "Power profiles unavailable"
+            inner_w = pw - 2
+            x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            y = py + ph // 2
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         x = px + 2
         ylim = py + ph - 1
         bw = pw - 4
@@ -858,6 +952,13 @@ class UI:
         self.addstr(ybot, x0 + len(nbot) + 1, vbot, abot)
 
     def draw_fan_monitor(self, py, px, ph, pw):
+        if not QUIRKS.has_cap(CAP_FAN_MODE):
+            text = "Fan monitor unavailable"
+            inner_w = pw - 2
+            x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            y = py + ph // 2
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         x0, x1 = px + 1, px + pw - 2
         y0, y1 = py + 1, py + ph - 2
         cpu_m = self.state_fan_mode("cpu")
@@ -884,8 +985,9 @@ class UI:
         ty0, ty1 = ytop + 2, ybot - 3
         if ty1 - ty0 < 3:
             return
-        cols = (("CPU", x0 + 3, "cpu", "/", ".", cpu_m, C.ACC),
-                ("GPU", x0 + 12, "gpu", "'", ";", gpu_m, C.MID))
+        cols = [("CPU", x0 + 3, "cpu", "/", ".", cpu_m, C.ACC)]
+        if QUIRKS.fan_count >= 2:
+            cols.append(("GPU", x0 + 12, "gpu", "'", ";", gpu_m, C.MID))
         for name, cx, which, kup, kdn, mode, pair in cols:
             active = mode == "custom"
             duty = self.duty(which)
@@ -907,8 +1009,9 @@ class UI:
         if getattr(self, "_cpu_model", None) is None:
             try:
                 with open("/proc/cpuinfo") as f:
-                    base = next(line.split(":", 1)[1].strip()
-                            for line in f if line.startswith("model name"))
+                    base = next(
+                        line.split(":", 1)[1].strip()
+                        for line in f if line.startswith("model name"))
                 short = None
                 m = _re.search(r'i[3579]-\d{4,5}[A-Za-z]*', base)
                 if m:
@@ -936,8 +1039,11 @@ class UI:
                     result = subprocess.run(
                         ["lspci"], capture_output=True, text=True, timeout=2)
                     for line in result.stdout.splitlines():
-                        if "VGA" in line and ("NVIDIA" in line or "GeForce" in line):
-                            if "[" in line and "]" in line:
+                        has_vga = "VGA" in line
+                        has_nvidia = "NVIDIA" in line or "GeForce" in line
+                        if has_vga and has_nvidia:
+                            has_brackets = "[" in line and "]" in line
+                            if has_brackets:
                                 name = line.split("[", 1)[1].split("]", 1)[0].strip()
                             else:
                                 name = line.split(":")[-1].strip()
@@ -954,6 +1060,13 @@ class UI:
         return self._cpu_model, self._gpu_model
 
     def draw_thermal(self, py, px, ph, pw):
+        if not QUIRKS.has_cap(CAP_HWMON):
+            text = "Thermal monitoring unavailable"
+            inner_w = pw - 2
+            x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            y = py + ph // 2
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         x0, x1 = px + 1, px + pw - 2
         y0, y1 = py + 1, py + ph - 2
         d = self.snap.get("data", {}) or {}
@@ -973,10 +1086,12 @@ class UI:
             C.MID if (gpu_t is not None and gpu_t >= 65) else C.G_B)
         g = max(1, (ph - 7) // 2)
         cpu_disp = cpu_model if len(cpu_model) <= pw - 12 else cpu_model[:pw - 13] + "\u2026"
-        self.addstr(y0, x0, f"CPU : {cpu_disp}",
-                    curses.color_pair(C.ACC) | curses.A_BOLD)
-        self.addstr(y0 + 1, x0, f"cpu {fmt_temp(cpu_t, self.temp_f)}",
-                    curses.color_pair(temp_color(cpu_t)) | curses.A_BOLD)
+        self.addstr(
+            y0, x0, f"CPU : {cpu_disp}",
+            curses.color_pair(C.ACC) | curses.A_BOLD)
+        self.addstr(
+            y0 + 1, x0, f"cpu {fmt_temp(cpu_t, self.temp_f)}",
+            curses.color_pair(temp_color(cpu_t)) | curses.A_BOLD)
         yy = y0 + 2
         for row in braille(cpus, pw - 2, g, anchor="bottom"):
             if yy >= y1 - 4:
@@ -1009,22 +1124,38 @@ class UI:
         self.click(y0, kx, 1, 3, ("temp",))
 
     def draw_keyboard(self, py, px, ph, pw):
+        if not QUIRKS.has_cap(CAP_RGB):
+            text = "Keyboard RGB unavailable"
+            inner_w = pw - 2
+            x = px + 1 + max(0, (inner_w - len(text)) // 2)
+            y = py + ph // 2
+            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            return
         x0, x1 = px + 1, px + pw - 2
         y0, y1 = py + 1, py + ph - 2
         mode = self.kbd_mode()
-        self.seg_tabs(
-            y0, x0, x1 - x0 + 1,
-            [
-                ("static", "([) Static", ("tab", "static")),
-                ("dynamic", "(]) Dynamic", ("tab", "dynamic"))
-            ], mode)
+        tabs = [("static", "([) Static", ("tab", "static"))]
+        if QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+            tabs.append(("dynamic", "(]) Dynamic", ("tab", "dynamic")))
+        else:
+            tabs.append(("dynamic", "(]) Dynamic (unavailable)", ("tab", "dynamic")))
+        self.seg_tabs(y0, x0, x1 - x0 + 1, tabs, mode)
         if mode == "static":
             self.draw_static(x0, y0 + 4, x1, y1)
         else:
-            self.draw_dynamic(x0, y0 + 4, x1, y1)
+            if QUIRKS.has_cap(CAP_RGB_DYNAMIC):
+                self.draw_dynamic(x0, y0 + 4, x1, y1)
+            else:
+                text = "Dynamic effects unavailable"
+                inner_w = x1 - x0 + 1
+                x = x0 + max(0, (inner_w - len(text)) // 2)
+                y = y0 + (y1 - y0) // 2
+                self.addstr(y, x, text, curses.color_pair(C.DIM))
 
     def zone_button(self, y, x, w, i, rgb, on, sel):
         lab = f"({i + 1}) Z{i + 1}"
+        if len(ZONE_KEYS) == 1:
+            lab = f"(1) Zone {ZONE_KEYS[0]}"
         la = (
             curses.color_pair(C.ACC) | curses.A_BOLD if sel
             else curses.color_pair(C.FG))
@@ -1043,8 +1174,9 @@ class UI:
 
     def draw_static(self, x0, y, x1, y1):
         W = x1 - x0 + 1
-        bw = max(9, (W - 3) // 4)
-        for i in range(4):
+        n_zones = len(ZONE_KEYS)
+        bw = max(9, (W - (n_zones - 1)) // n_zones)
+        for i in range(n_zones):
             bx = x0 + i * (bw + 1)
             w = min(bw, x1 - bx + 1)
             if w < 8:
@@ -1071,7 +1203,7 @@ class UI:
 
     def chip_flow(self, y, x, W, ylim, cur):
         cx = x
-        for m, name in EFFECTS.items():
+        for m, name in EFFECT_NAMES.items():
             lab = f"({m}) {name}"
             cw = len(lab) + 2
             if cx > x and cx + cw > x + W:
@@ -1178,7 +1310,7 @@ class UI:
             self.addstr(y0 + i, x0, " " * bw, 0)
         title = (
             f"colour - zone Z{ZONE_KEYS.index(e['zone']) + 1}"
-            if e["kind"] == "zone" else f"colour - {EFFECTS[e['eff']]}")
+            if e["kind"] == "zone" else f"colour - {EFFECT_NAMES[e['eff']]}")
         self.box(y0, x0, bh, bw, title, active=True)
         foc = e.get("focus")
         ring = e["ring"]
@@ -1382,7 +1514,7 @@ class UI:
         else:
             d = self.dyn()
             if "colour" not in EFFECT_NEEDS[d["mode"]]:
-                self.msg = f"» {EFFECTS[d['mode']]} has no colour control"
+                self.msg = f"» {EFFECT_NAMES[d['mode']]} has no colour control"
                 self.msg_time = time.time()
                 return
             e = d["effects"][d["mode"]]
@@ -1403,6 +1535,11 @@ class UI:
     def act(self, action):
         if action is None:
             return
+        if QUIRKS.probe and isinstance(action, tuple):
+            if action[0] not in ("help", "url", "refresh", "temp", "plantab"):
+                self.msg = "!! probe mode: read-only"
+                self.msg_time = time.time()
+                return
         if self.editor is not None:
             self.act_editor(action)
             return
@@ -1500,6 +1637,12 @@ class UI:
         if self.editor is not None:
             self.editor_key(ch)
             return
+        if QUIRKS.probe and ch not in (
+            ord("?"), ord("F"), ord("-"), ord("="), ord("+"),
+            ord("o"), ord("O"), ord("p"), ord("P")):
+            self.msg = "!! probe mode: read-only"
+            self.msg_time = time.time()
+            return
         if ch == ord("?"):
             self.open_help()
         elif ch == ord("R"):
@@ -1537,7 +1680,9 @@ class UI:
         elif ch == ord("#"):
             self.pick_colour()
         elif ord("1") <= ch <= ord("5"):
-            if self.kbd_mode() == "static" and ch <= ord("4"):
+            is_static = self.kbd_mode() == "static"
+            key_is_zone = ch <= ord("4")
+            if is_static and key_is_zone:
                 self.sel_zone = ch - ord("1")
             elif self.kbd_mode() == "dynamic":
                 self.set_effect(ch - ord("0"))
@@ -1556,7 +1701,7 @@ class UI:
             if self.kbd_mode() == "dynamic":
                 d = self.dyn()
                 if "direction" not in EFFECT_NEEDS[d["mode"]]:
-                    self.msg = f"» {EFFECTS[d['mode']]} has no direction control"
+                    self.msg = f"» {EFFECT_NAMES[d['mode']]} has no direction control"
                     self.msg_time = time.time()
                 else:
                     e = d["effects"][d["mode"]]

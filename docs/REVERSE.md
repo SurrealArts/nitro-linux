@@ -52,4 +52,4 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `wmi_raw` sysfs node (0600) sends raw `method + bytes` calls for probing.
+- `wmi_raw` sysfs node sends raw `method + bytes` calls for probing.

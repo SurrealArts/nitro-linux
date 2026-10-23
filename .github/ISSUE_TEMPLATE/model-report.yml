@@ -1,0 +1,80 @@
+name: "Model Support Report"
+description: "Request support for a new Acer Nitro/Predator model"
+title: "[Model] <product_name> / <board_name>"
+labels: ["model-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Required Information
+
+        **Run this and paste the output:**
+
+        ```bash
+        {
+          echo "[uname]"; uname -r
+          echo "[DMI]"
+          cat /sys/class/dmi/id/{sys_vendor,product_name,board_name,board_vendor,bios_version,bios_date}
+          echo "[WMI]"; ls /sys/bus/wmi/devices/
+          echo "[nitro]"; ls /sys/devices/platform/nitro/ 2>/dev/null || true
+          echo "[modules]"; lsmod | grep -E 'nitro|acer_wmi' || true
+        } 2>/dev/null
+        ```
+
+  - type: input
+    id: distro-kernel
+    attributes:
+      label: "Distro & Kernel"
+      description: "e.g., Arch Linux 6.12.1-arch1-1"
+      placeholder: "Arch Linux 6.12.1-arch1-1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: "Install Method"
+      options:
+        - Package
+        - Source
+        - Not installed
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed-behavior
+    attributes:
+      label: "Observed Behavior"
+      description: "Fans, temperatures, keyboard backlight, platform profile, suspend/resume"
+      placeholder: "Describe what you observe..."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety-ack
+    attributes:
+      label: "Safety Acknowledgement"
+      description: "You must confirm you have not done any of the following"
+      options:
+        - label: "I have not force-loaded the module"
+          required: true
+        - label: "I have not patched DMI strings"
+          required: true
+        - label: "I have not written raw EC/WMI registers"
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Next Steps
+
+        If your model matches a candidate in the probe table, you may be asked to run:
+
+        ```bash
+        sudo modprobe -r nitro 2>/dev/null || true
+        sudo modprobe nitro probe=1
+        cat /sys/devices/platform/nitro/capabilities
+        nitro report
+        ```
+
+        Probe mode is read-only — no hardware writes, no profile/LED/hwmon registration, `wmi_raw` limited to read methods.

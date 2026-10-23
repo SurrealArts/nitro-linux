@@ -1,12 +1,20 @@
 # nitro-linux
 
-Kernel driver, daemon, and btop-style TUI for the Acer Nitro AN515-57: keyboard backlight effects, fan monitoring, thermal policies. Coexists with in-tree `acer-wmi`.
+Kernel driver, daemon, and btop-style TUI for Acer Nitro laptops: keyboard backlight effects, fan monitoring, thermal policies. On verified models it coexists with in-tree `acer-wmi`; other models may be supported through the probe interface. See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
 
-Target: AN515-57 / Scala_TLS, BIOS V1.22. Other AN515 models are still in planning.
+**Verified:** AN515-57 / Scala_TLS, BIOS V1.22
+
+Verified: AN515-57 / Scala_TLS, BIOS V1.22. Other models may be supported via the probe interface (`probe=1`). See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
 
 Minimum terminal size: **120x47**
 
 ![nitro-linux dashboard](docs/screenshot-tui.png)
+
+## Documentation
+
+- [Supported models & how to report](docs/MODELS.md)
+- [Contributing a model report](docs/CONTRIBUTING.md)
+- [Reverse-engineering notes](docs/REVERSE.md)
 
 ## Install
 
@@ -134,7 +142,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 #### Kernel, sensors, LEDs, and profiles
 
 - `nitro` kernel module: `/usr/lib/modules/<kernel>/updates/dkms/nitro.ko.zst`; DKMS source `/usr/src/nitro-<version>/`, build state `/var/lib/dkms/nitro/<version>/`.
-- `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
+- `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
 - `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the four keyboard zones.
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`) and `coretemp` package temperature when present.
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
