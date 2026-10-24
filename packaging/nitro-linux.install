@@ -54,6 +54,32 @@ _run_as_user() {
   fi
 }
 
+_ensure_nitro_group() {
+  getent group nitro >/dev/null 2>&1 || groupadd -r nitro
+}
+
+_tighten_state() {
+  install -d -m755 -o root -g root /var/lib/nitro
+  chmod 755 /var/lib/nitro 2>/dev/null || true
+  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db 2>/dev/null || true
+  rm -f /var/lib/nitro/state.json.tmp 2>/dev/null || true
+}
+
+_add_user_nitro() {
+  local u
+  _ensure_nitro_group
+  if ! u="$(_invoking_user)"; then
+    echo ":: Add your desktop user to group nitro, then log out and back in:"
+    echo "::   sudo usermod -aG nitro \"\$USER\""
+    return 0
+  fi
+  if id -nG "$u" | grep -qw nitro; then
+    return 0
+  fi
+  usermod -aG nitro "$u"
+  echo ":: Added $u to group nitro. Log out and back in so the TUI can connect."
+}
+
 _auto_key() {
   local u uid home
   if ! u="$(_invoking_user)"; then
@@ -99,8 +125,11 @@ _disable_key() {
 post_install() {
   _install_config
   _check_source_install
+  _tighten_state
+  _add_user_nitro
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/nitro-linux.conf >/dev/null 2>&1 || true
     systemctl enable nitro-apply.service nitrod.service
   fi
   echo ":: Reboot once to load the nitro kernel module."
@@ -109,8 +138,11 @@ post_install() {
 
 post_upgrade() {
   _install_config
+  _tighten_state
+  _add_user_nitro
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/nitro-linux.conf >/dev/null 2>&1 || true
     systemctl enable nitro-apply.service nitrod.service
     systemctl try-restart nitro-apply.service 2>/dev/null || true
     systemctl try-restart nitrod.service 2>/dev/null || true

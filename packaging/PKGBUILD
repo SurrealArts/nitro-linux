@@ -6,7 +6,7 @@ pkgdesc='Acer Nitro kernel driver, daemon, and TUI'
 arch=('x86_64')
 url='https://github.com/SurrealArts/nitro-linux'
 license=('GPL-3.0-or-later')
-depends=('python' 'dkms' 'systemd')
+depends=('python' 'dkms' 'systemd' 'acl')
 makedepends=('git')
 optdepends=(
   'linux-headers: build the module for the default kernel'
@@ -32,6 +32,8 @@ package() {
   install -Dm644 "$src/deploy/nitrod.service" "$pkgdir/usr/lib/systemd/system/nitrod.service"
   install -Dm644 "$src/deploy/nitro-apply.service" "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
   install -Dm644 "$src/deploy/nitro-key.service" "$pkgdir/usr/lib/systemd/user/nitro-key.service"
+  install -Dm644 "$src/deploy/nitro-linux.sysusers" "$pkgdir/usr/lib/sysusers.d/nitro-linux.conf"
+  install -Dm644 "$src/deploy/nitro-linux.tmpfiles" "$pkgdir/usr/lib/tmpfiles.d/nitro-linux.conf"
   sed -i 's#/usr/local/bin/#/usr/bin/#g' \
     "$pkgdir/usr/lib/systemd/system/nitrod.service" \
     "$pkgdir/usr/lib/systemd/system/nitro-apply.service"

@@ -20,8 +20,11 @@ State layout (0.8.0)
     profile_ac      platform profile applied while on mains power
     profile_battery platform profile applied while on battery
 """
+import grp
 import json
 import os
+import pwd
+import shutil
 import socket
 import subprocess
 import sqlite3
@@ -57,7 +60,9 @@ from model import (
 UID = os.getuid()
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{UID}")
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
+SOCK_GROUP = os.environ.get("NITRO_SOCK_GROUP", "nitro")
 SYS = os.environ.get("NITRO_SYS", "/sys/devices/platform/nitro")
+VERSION = "2.3.0"
 
 _PP = find_platform_profile()
 PP = str(_PP) if _PP else None
@@ -336,9 +341,18 @@ def load_state():
 def save_state(s):
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     tmp = STATE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(s, f, indent=2)
-    os.replace(tmp, STATE)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(s, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, STATE)
+        os.chmod(STATE, 0o600)
+    except OSError as e:
+        pr_err(f"save_state failed: {e}")
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def adopt_current(s):
@@ -509,6 +523,10 @@ state_lock = threading.Lock()
 def db():
     os.makedirs(DBDIR, exist_ok=True)
     con = sqlite3.connect(DB)
+    try:
+        os.chmod(DB, 0o600)
+    except OSError:
+        pass
     con.execute("""CREATE TABLE IF NOT EXISTS samples(
         ts INTEGER PRIMARY KEY, package_c REAL, ec_c REAL, gpu_c REAL,
         cpu_rpm REAL, gpu_rpm REAL, cpu_duty REAL, gpu_duty REAL)""")
@@ -722,6 +740,45 @@ def handle(line):
     return {"ok": False, "err": "unknown command"}
 
 
+def _nitro_group():
+    try:
+        return grp.getgrnam(SOCK_GROUP)
+    except KeyError:
+        return None
+
+
+def _secure_sock():
+    os.chmod(SOCK, 0o660)
+    g = _nitro_group()
+    if g is None:
+        pr_err(f"group {SOCK_GROUP} missing; socket is root-only until it exists")
+        return
+    try:
+        os.chown(SOCK, 0, g.gr_gid)
+    except OSError as e:
+        pr_err(f"socket chown failed: {e}")
+        return
+    setfacl = shutil.which("setfacl")
+    if not setfacl:
+        return
+    names = set(g.gr_mem)
+    try:
+        for p in pwd.getpwall():
+            if p.pw_gid == g.gr_gid:
+                names.add(p.pw_name)
+    except OSError:
+        pass
+    for name in names:
+        if not name or name == "root":
+            continue
+        subprocess.run(
+            [setfacl, "-m", f"u:{name}:rw", SOCK],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
 def serve():
     try:
         os.unlink(SOCK)
@@ -729,7 +786,7 @@ def serve():
         pass
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCK)
-    os.chmod(SOCK, 0o660)
+    _secure_sock()
     server.listen(5)
     print(f"nitrod listening on {SOCK}")
     while not stop_event.is_set():
@@ -784,12 +841,16 @@ def main():
             try:
                 con.execute(
                     "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?)",
-                    (int(time.time()), s.get("package_c"), s.get("ec_c"),
-                     s.get("gpu_c"),
-                     float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
-                     float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
-                     float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
-                     float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None))
+                    (
+                        int(time.time()),
+                        s.get("package_c"),
+                        s.get("ec_c"),
+                        s.get("gpu_c"),
+                        float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
+                        float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
+                        float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
+                        float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None)
+                    )
                 con.commit()
             except (sqlite3.Error, ValueError, TypeError):
                 pass
@@ -828,5 +889,27 @@ def handle_client(client):
         client.close()
 
 
+def project_version():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (
+        os.path.join(here, "VERSION"),
+        os.path.join(here, os.pardir, "VERSION"),
+    ):
+        try:
+            with open(p) as f:
+                v = f.read().strip()
+            if v:
+                return v
+        except OSError:
+            pass
+    return VERSION
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        print(project_version())
+        sys.exit(0)
+    if os.getuid() != 0:
+        pr_err("nitrod must run as root; use: sudo systemctl start nitrod")
+        sys.exit(1)
     main()

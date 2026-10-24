@@ -8,6 +8,10 @@ if pacman -Qq nitro-linux >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v setfacl >/dev/null 2>&1; then
+  echo "[!] 'acl' package required; socket ACLs disabled (degrades to 660 root:root)."
+fi
+
 invoking_user() {
   local u sid uid users=
   for u in "${SUDO_USER:-}" "$(logname 2>/dev/null || true)"; do
@@ -36,6 +40,32 @@ invoking_user() {
     *" "*) return 1 ;;
   esac
   printf '%s\n' "$users"
+}
+
+ensure_nitro_group() {
+  getent group nitro >/dev/null 2>&1 || groupadd -r nitro
+}
+
+tighten_state() {
+  install -d -m755 -o root -g root /var/lib/nitro
+  chmod 755 /var/lib/nitro 2>/dev/null || true
+  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db 2>/dev/null || true
+  rm -f /var/lib/nitro/state.json.tmp 2>/dev/null || true
+}
+
+add_user_nitro() {
+  local u
+  ensure_nitro_group
+  if ! u="$(invoking_user)"; then
+    echo "[*] Add your desktop user to group nitro, then log out and back in:"
+    echo "    sudo usermod -aG nitro \"\$USER\""
+    return 0
+  fi
+  if id -nG "$u" | grep -qw nitro; then
+    return 0
+  fi
+  usermod -aG nitro "$u"
+  echo "[*] Added $u to group nitro. Log out and back in so the TUI can connect."
 }
 
 run_as_user() {
@@ -139,7 +169,8 @@ if [ -f "$VFILE" ]; then
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
-mkdir -p /var/lib/nitro
+tighten_state
+add_user_nitro
 systemctl daemon-reload
 systemctl enable nitro-apply.service nitrod.service
 systemctl stop nitrod.service 2>/dev/null || true

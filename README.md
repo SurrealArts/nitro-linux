@@ -108,7 +108,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - **Installer**: `nitro key auto --if-unconfigured` is the installer form; it does nothing when `~/.config/nitro/key.json` already exists.
 - **Config**: Binding state is always `~/.config/nitro/key.json`, matching the TUI config, and is kept across upgrades and uninstalls.
 - **Autostart**: `nitro-key.service` is the systemd user unit; without a running user manager, installers enable it for the next login; without systemd user services, `nitro key auto` or `nitro key bind` writes `~/.config/autostart/nitro-key.desktop`, and `nitro key listen` is the manual fallback.
-- **Permissions**: Reading `/dev/input/event*` requires the `input` group: `sudo usermod -aG input "$USER"`, then log out and back in.
+- **Permissions**: Reading `/dev/input/event*` requires the `input` group: `sudo usermod -aG input "$USER"`, then log out and back in. The TUI talks to `nitrod` through `/run/nitro.sock`, which requires the `nitro` group: `sudo usermod -aG nitro "$USER"`, then log out and back in.
 - **Install**: Package install, package upgrade, and source install run `nitro key auto --if-unconfigured` once for the invoking desktop user; an existing config is never rewritten. Otherwise run it yourself.
 - **Conflicts**: `nitro key auto` never rewrites an existing command and does not modify udev rules or desktop shortcuts; if the desktop already uses this key, remove that shortcut and rerun.
 
@@ -123,7 +123,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `~/.config/nitro/tui.json`: TUI refresh interval and °C/°F preference; kept on uninstall.
 - `~/.config/nitro/key.json`: captured Nitro key and bound command; fixed at `~/.config` so the installer, CLI, and user service agree; kept across installs and uninstalls.
 - `~/.config/autostart/nitro-key.desktop`: XDG fallback that starts `nitro key listen` at login when systemd user services are unavailable; removed on uninstall.
-- `/run/nitro.sock`: runtime Unix socket for `nitrod`; not persistent.
+- `/run/nitro.sock`: runtime Unix socket for `nitrod`; owned `root:nitro` mode `660`; not persistent. Add your user with `sudo usermod -aG nitro "$USER"`, then log out and back in.
 
 #### Services
 

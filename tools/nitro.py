@@ -1409,6 +1409,8 @@ def usage():
     print("Note:")
     print("    sysfs is root-owned, run with sudo for writes,")
     print(f"    e.g. sudo {prog} rgb 1 255 0 0")
+    print("    the TUI needs group nitro for /run/nitro.sock:")
+    print("    sudo usermod -aG nitro \"$USER\", then log out and back in")
     print("    key commands are user-level; do not run them with sudo")
     print("    report is read-only; run as your user or with sudo for dmesg")
 

@@ -23,6 +23,7 @@ keys
     refresh     - faster, + slower (100 ms per step)
 """
 import curses
+import errno
 import json
 import os
 import socket
@@ -1877,14 +1878,17 @@ def runloop(ui):
                     last_sample = now
                 if ui.msg and not ui.msg.startswith("!!") and now - ui.msg_time > 5:
                     ui.msg = ""
-            except OSError:
+            except OSError as e:
                 ui.snap = {"data": {}, "desired": {}, "source": None, "daemon": {}}
                 if now - last_sample >= ui.refresh_ms / 2000.0:
                     ui.series.append(
                         {"cpu_rpm": None, "gpu_rpm": None,
                         "package_c": None, "gpu_c": None})
                     last_sample = now
-                ui.msg = "!! daemon down: sudo systemctl start nitrod"
+                if e.errno in (errno.EACCES, errno.EPERM):
+                    ui.msg = "!! cannot access nitrod socket; add your user to group nitro, then log out and back in"
+                else:
+                    ui.msg = "!! daemon down: sudo systemctl start nitrod"
             last = now
         ui.draw()
         ui.s.timeout(max(20, ui.refresh_ms))

@@ -10,6 +10,7 @@ pkgbase = nitro-linux
 	depends = python
 	depends = dkms
 	depends = systemd
+	depends = acl
 	optdepends = linux-headers: build the module for the default kernel
 	optdepends = linux-lts-headers: build the module for the LTS kernel
 	optdepends = nvidia-utils: GPU temperature and model name in the thermal pane
