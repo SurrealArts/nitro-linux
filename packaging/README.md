@@ -13,10 +13,17 @@ Publishing is handled by `.github/workflows/publish-repo.yml` on `v*` tags or ma
 
 Release:
 
-1. Bump `VERSION`, `dkms.conf`, `MODULE_VERSION`/loading log in `src/nitro.c`,
-   the TUI fallback `VERSION`, `pkgver`, and regenerate `.SRCINFO`.
-2. Commit the version bump on its own commit, tag that commit `vX.Y.Z`, and
-   push the tag.
-3. Bump `pkgrel` for packaging-only rebuilds.
+1. Bump:
+    - `dkms.conf`: PACKAGE_VERSION
+    - `VERSION`
+    - `.github/ISSUE_TEMPLATE/bug-report.yml`: placeholder
+    - `daemon/nitrod.py`: VERSION
+    - `docs/MODELS.md`
+    - `packaging/.SRCINFO`: pkgver, source
+    - `packaging/PKGBUILD`: pkgver
+    - `src/nitro.c`: MODULE_VERSION, pr_info
+    - `tui/nitro-linux.py`: `VERSION`,
+2. Commit the version bump on its own commit `"chore(release): X.Y.Z"`, tag that commit `vX.Y.Z`, and push the tag.
+3. Bump `pkgrel` for packaging-only rebuilds (.SRCINFO, PKGBUILD).
 
 Key: [keys/nitro-linux-repo.asc](../keys/nitro-linux-repo.asc). Private half: `GPG_PRIVATE_KEY` Actions secret.
