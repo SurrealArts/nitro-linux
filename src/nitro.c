@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * nitro - Acer Nitro AN515-57 EC/WMI driver v2.3.1
- * (support for other models are to be added in later updates)
+ * nitro - Acer Nitro WMI driver
  *
- * Targets (current): Acer Nitro AN515-57 (Scala_TLS), BIOS V1.22.
- * (entry to remove soon)
+ * Targets: Acer Nitro family; verified model: AN515-57 (Scala_TLS), BIOS V1.22.
  *
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
  * Restores initial fan/RGB/FTBL/CoolBoost on unload. See docs/REVERSE.md.
@@ -30,7 +28,7 @@
 #include <linux/string.h>
 
 MODULE_AUTHOR("SurrealArts");
-MODULE_DESCRIPTION("Acer Nitro WMI driver (hwmon + leds + platform_profile)");
+MODULE_DESCRIPTION("Acer Nitro WMI driver (fan, RGB, hwmon, platform_profile)");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("2.3.1");
 
@@ -71,8 +69,6 @@ MODULE_VERSION("2.3.1");
 #define NITRO_MAX_ZONES			4
 #define NITRO_WMI_MAX_PAYLOAD		64
 #define NITRO_INPUT_MAX			128
-
-// Man I should refactor stuff better or something...
 
 enum nitro_fan_mode {
 	NITRO_FAN_MODE_AUTO		= 1,

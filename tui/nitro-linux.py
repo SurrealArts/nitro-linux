@@ -576,7 +576,7 @@ class UI:
             return
         on = self.coolboost_live()
         if on is None:
-            self.msg = "!! CoolBoost unavailable (driver 2.1.0 required)"
+            self.msg = "!! CoolBoost unavailable (not supported on this model)"
             self.msg_time = time.time()
             return
         self.send(

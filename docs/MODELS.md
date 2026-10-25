@@ -8,6 +8,16 @@
 
 ---
 
+## Candidates (read-only probe)
+
+No model is currently in the probe table. A probe entry is added only after a
+[Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged.
+
+| Product | Board | BIOS | Issue | Probe entry | Status | Last update |
+| ------- | ----- | ---- | ----- | ----------- | ------ | ----------- |
+
+---
+
 ## Capability-based support
 
 Starting with the multi-model refactor, the driver exposes a **capabilities** sysfs file:
@@ -23,7 +33,7 @@ This means:
 
 - Adding a model = adding a quirk table entry in the kernel, not rewriting userspace
 - The same package works across models with different feature sets
-- Unsupported features are gracefully hidden, not broken
+- Unsupported features are gracefully hidden, not broken (unsupported features will not fail module initialization)
 
 ---
 
@@ -50,7 +60,7 @@ Also include:
 - What you observe: fans, temperatures, backlight, profile, suspend behavior
 - **Safety acknowledgement:** you have not force-loaded or written raw registers
 
-`nitro report` automates this. It is read-only and redacts UUIDs, MACs, and serials.
+`nitro report` automates this. It is read-only and redacts MAC addresses and serial numbers (review output before posting).
 
 ---
 

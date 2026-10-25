@@ -8,7 +8,7 @@ body:
       value: |
         ## Required Information
 
-        **Run this and paste the output:**
+        Please provide accurate DMI and system information. You can generate this using `nitro report` or the command below:
 
         ```bash
         {
@@ -20,6 +20,33 @@ body:
           echo "[modules]"; lsmod | grep -E 'nitro|acer_wmi' || true
         } 2>/dev/null
         ```
+
+  - type: input
+    id: product-name
+    attributes:
+      label: "Product Name"
+      description: "From /sys/class/dmi/id/product_name"
+      placeholder: "e.g., Nitro AN515-58"
+    validations:
+      required: true
+
+  - type: input
+    id: board-name
+    attributes:
+      label: "Board Name"
+      description: "From /sys/class/dmi/id/board_name"
+      placeholder: "e.g., Scala_TLS"
+    validations:
+      required: true
+
+  - type: input
+    id: bios-version
+    attributes:
+      label: "BIOS Version"
+      description: "From /sys/class/dmi/id/bios_version"
+      placeholder: "e.g., V1.22"
+    validations:
+      required: true
 
   - type: input
     id: distro-kernel
@@ -42,6 +69,15 @@ body:
       required: true
 
   - type: textarea
+    id: report-output
+    attributes:
+      label: "nitro report output"
+      description: "Output from `nitro report` (or the bash snippet above)"
+      placeholder: "Paste output here..."
+    validations:
+      required: true
+
+  - type: textarea
     id: observed-behavior
     attributes:
       label: "Observed Behavior"
@@ -49,6 +85,15 @@ body:
       placeholder: "Describe what you observe..."
     validations:
       required: true
+
+  - type: textarea
+    id: probe-output
+    attributes:
+      label: "Probe Output (optional)"
+      description: "Only fill this if a maintainer has triaged your report, added a candidate probe entry, and requested probe output"
+      placeholder: "sudo modprobe nitro probe=1; cat /sys/devices/platform/nitro/capabilities"
+    validations:
+      required: false
 
   - type: checkboxes
     id: safety-ack
@@ -62,19 +107,12 @@ body:
           required: true
         - label: "I have not written raw EC/WMI registers"
           required: true
+        - label: "I understand my model is unverified and probe mode is read-only"
+          required: true
 
   - type: markdown
     attributes:
       value: |
         ## Next Steps
 
-        If your model matches a candidate in the probe table, you may be asked to run:
-
-        ```bash
-        sudo modprobe -r nitro 2>/dev/null || true
-        sudo modprobe nitro probe=1
-        cat /sys/devices/platform/nitro/capabilities
-        nitro report
-        ```
-
-        Probe mode is read-only — no hardware writes, no profile/LED/hwmon registration, `wmi_raw` limited to read methods.
+        Once your report is triaged, a candidate probe entry may be added in a future release. Maintainers will guide you through running `probe=1` to safely collect evidence.

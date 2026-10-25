@@ -2,10 +2,6 @@
 
 Kernel driver, daemon, and btop-style TUI for Acer Nitro laptops: keyboard backlight effects, fan monitoring, thermal policies. On verified models it coexists with in-tree `acer-wmi`; other models may be supported through the probe interface. See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
 
-**Verified:** AN515-57 / Scala_TLS, BIOS V1.22
-
-Verified: AN515-57 / Scala_TLS, BIOS V1.22. Other models may be supported via the probe interface (`probe=1`). See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
-
 Minimum terminal size: **120x47**
 
 ![nitro-linux dashboard](docs/screenshot-tui.png)
@@ -56,26 +52,26 @@ sudo bash deploy/uninstall.sh
 
 ### TUI keys
 
-| Area      | Keys                | Action                                                      |
-| --------- | ------------------- | ----------------------------------------------------------- |
-| Fans      | `A` `S` `D`         | Auto, Max, Custom                                           |
-| Fans      | `.` `/`             | CPU duty -/+ 5%                                             |
-| Fans      | `;` `'`             | GPU duty -/+ 5%                                             |
-| CoolBoost | `i`                 | Toggle in Auto; disabled in Max/Custom                      |
-| Power     | `Z` `X` `C` `V` `B` | Power Saver, Quiet, Balance, Balance Acer, High-Performance |
-| Power     | `o` `p`             | AC / Battery tab                                            |
-| Thermal   | `F`                 | Switch °C / °F                                              |
-| Keyboard  | `[` `]`             | Static / dynamic mode                                       |
-| Keyboard  | `1`-`4`             | Select a static zone                                        |
-| Keyboard  | `x`                 | Toggle the selected static zone                             |
-| Keyboard  | `1`-`5`             | Dynamic effect: breath, neon, wave, shifting, zoom          |
-| Keyboard  | `t` `T`             | Dynamic speed -/+                                           |
-| Keyboard  | `f`                 | Dynamic direction (wave, shifting)                          |
-| Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                   |
-| Keyboard  | `l` `L`             | Brightness -/+                                              |
-| Session   | `R`                 | Reapply saved state                                         |
-| Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                    |
-| Session   | `q` `Q`             | Quit / stop daemon                                          |
+| Area      | Keys                | Action                                                                     |
+| --------- | ------------------- | -------------------------------------------------------------------------- |
+| Fans      | `A` `S` `D`         | Auto, Max, Custom                                                          |
+| Fans      | `.` `/`             | CPU duty -/+ 5%                                                            |
+| Fans      | `;` `'`             | GPU duty -/+ 5%                                                            |
+| CoolBoost | `i`                 | Toggle in Auto; disabled in Max/Custom                                     |
+| Power     | `Z` `X` `C` `V` `B` | Power Saver, Quiet, Balance, Balance Acer, High-Performance                |
+| Power     | `o` `p`             | AC / Battery tab                                                           |
+| Thermal   | `F`                 | Switch °C / °F                                                             |
+| Keyboard  | `[` `]`             | Static / dynamic mode                                                      |
+| Keyboard  | `1`-`4`             | Select a static zone                                                       |
+| Keyboard  | `x`                 | Toggle the selected static zone                                            |
+| Keyboard  | `1`-`5`             | Dynamic effect: breath, neon, wave, shifting, zoom                         |
+| Keyboard  | `t` `T`             | Dynamic speed -/+                                                          |
+| Keyboard  | `f`                 | Dynamic direction (wave, shifting)                                         |
+| Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                                  |
+| Keyboard  | `l` `L`             | Brightness -/+                                                             |
+| Session   | `R`                 | Reapply saved state                                                        |
+| Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                                   |
+| Session   | `q` `Q`             | Quit UI (daemon continues running; stop with `sudo systemctl stop nitrod`) |
 
 ### CLI
 
@@ -174,7 +170,7 @@ sudo openssl req -new -x509 -newkey rsa:2048 \
 
 ## Dependencies
 
-Package: `python`, `dkms`, `systemd`
+Package: `python`, `dkms`, `systemd`, `acl` (for per-user socket access)
 
 - optional: `nvidia-utils`
 

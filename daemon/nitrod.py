@@ -6,7 +6,7 @@ nitrod - daemon
 State persists in /var/lib/nitro/state.json,
 history in /var/lib/nitro/history.db (24h).
 
-State layout (0.8.0)
+State layout:
     mode            "static" | "dynamic"          active keyboard display
     static          {"1": {"rgb": [r,g,b], "on": bool}, ...}
                     zones on EC keys 1,2,4,8; on/off is independent of the

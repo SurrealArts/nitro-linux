@@ -1,5 +1,5 @@
 [Unit]
-Description=Apply /etc/nitro.conf (Acer Nitro AN515-57 keyboard/fan)
+Description=Apply /etc/nitro.conf (Acer Nitro)
 After=systemd-modules-load.service
 ConditionPathExists=/sys/devices/platform/nitro
 

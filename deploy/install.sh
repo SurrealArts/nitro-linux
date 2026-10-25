@@ -9,7 +9,7 @@ if pacman -Qq nitro-linux >/dev/null 2>&1; then
 fi
 
 if ! command -v setfacl >/dev/null 2>&1; then
-  echo "[!] 'acl' package required; socket ACLs disabled (degrades to 660 root:root)."
+  echo "[!] per-user ACLs disabled; group 'nitro' access still works. Install 'acl' to grant access to the invoking user without a re-login."
 fi
 
 invoking_user() {
