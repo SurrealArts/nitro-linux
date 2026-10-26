@@ -19,3 +19,7 @@ install: all
 unload:
 	sudo rmmod nitro || true
 	dmesg | tail -n 30
+
+bump:
+	@if [ -z "$(VERSION)" ]; then echo "usage: make bump VERSION=x.y.z"; exit 1; fi
+	python3 tools/bump_version.py "$(VERSION)"

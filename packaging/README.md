@@ -13,17 +13,16 @@ Publishing is handled by `.github/workflows/publish-repo.yml` on `v*` tags or ma
 
 Release:
 
-1. Bump:
-    - `dkms.conf`: PACKAGE_VERSION
-    - `VERSION`
-    - `.github/ISSUE_TEMPLATE/bug-report.yml`: placeholder
-    - `daemon/nitrod.py`: VERSION
-    - `docs/MODELS.md`
-    - `packaging/.SRCINFO`: pkgver, source
-    - `packaging/PKGBUILD`: pkgver
-    - `src/nitro.c`: MODULE_VERSION, pr_info
-    - `tui/nitro-linux.py`: `VERSION`,
-2. Commit the version bump on its own commit `"chore(release): X.Y.Z"`, tag that commit `vX.Y.Z`, and push the tag.
-3. Bump `pkgrel` for packaging-only rebuilds (.SRCINFO, PKGBUILD).
+1. Bump every version location from the repo root:
+
+    ```bash
+    make bump VERSION=X.Y.Z
+    ```
+
+    The script updates `VERSION`, `dkms.conf`, `packaging/PKGBUILD`, `packaging/.SRCINFO`, the Python fallbacks, the kernel version when it is still a literal, and the docs/issue-template version hints. It refuses to run on a dirty tracked tree unless you pass `--allow-dirty`.
+
+2. Review the diff and commit it on its own as `"chore(release): X.Y.Z"`.
+3. Create and push a signed tag on that commit: `git tag -s vX.Y.Z` then `git push origin vX.Y.Z`.
+4. Bump `pkgrel` for packaging-only rebuilds (`.SRCINFO`, `PKGBUILD`).
 
 Key: [keys/nitro-linux-repo.asc](../keys/nitro-linux-repo.asc). Private half: `GPG_PRIVATE_KEY` Actions secret.

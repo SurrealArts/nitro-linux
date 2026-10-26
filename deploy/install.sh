@@ -143,13 +143,14 @@ echo "[*] version $VER"
 echo "[*] copy source to $SRC"
 rm -rf "$SRC"
 mkdir -p "$SRC"
-cp -a Makefile dkms.conf src tools docs deploy README.md "$SRC/"
+cp -a Makefile dkms.conf VERSION src tools docs deploy README.md "$SRC/"
 rm -rf "$SRC/src/"*.o "$SRC/src/"*.ko "$SRC/src/".*.cmd "$SRC/.tmp_versions" "$SRC/Module.symvers" "$SRC/modules.order" 2>/dev/null || true
 echo "[*] dkms add/build/install"
 dkms remove -m nitro -v "$VER" --all 2>/dev/null || true
 dkms add -m nitro -v "$VER"
-for k in $(ls /lib/modules); do
-  [ -d "/lib/modules/$k/build" ] || continue
+for k in /lib/modules/*; do
+  [ -d "$k/build" ] || continue
+  k="${k##*/}"
   echo "[*] build/install for $k"
   dkms build -m nitro -v "$VER" -k "$k"
   dkms install -m nitro -v "$VER" -k "$k"
@@ -165,7 +166,10 @@ install -Dm644 tools/model.py /usr/local/lib/nitro/model.py
 install -Dm644 deploy/nitro-key.service /usr/local/lib/systemd/user/nitro-key.service
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then
-  sed -i "s/^VERSION = .*/VERSION = \"$(tr -d '[:space:]' < "$VFILE")\"/" /usr/local/bin/nitro-linux
+  install -Dm644 "$VFILE" /usr/local/lib/nitro/VERSION
+  V="$(tr -d '[:space:]' < "$VFILE")"
+  sed -i "s/^VERSION = .*/VERSION = \"$V\"/" /usr/local/bin/nitro-linux
+  sed -i "s/^VERSION = .*/VERSION = \"$V\"/" /usr/local/bin/nitrod
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
@@ -193,6 +197,9 @@ echo "[*] status"
 dkms status | grep nitro || true
 ls /sys/devices/platform/nitro/ | tr '\n' ' '; echo
 sensors 2>/dev/null | grep -A4 nitro || true
-ls /sys/class/leds/ | grep nitro || true
+for led in /sys/class/leds/*nitro*; do
+  [ -e "$led" ] || continue
+  echo "${led##*/}"
+done
 echo "[*] done. 'nitro-linux' panel and 'nitro' CLI are ready."
 auto_key

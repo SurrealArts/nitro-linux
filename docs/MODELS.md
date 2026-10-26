@@ -60,7 +60,7 @@ Also include:
 - What you observe: fans, temperatures, backlight, profile, suspend behavior
 - **Safety acknowledgement:** you have not force-loaded or written raw registers
 
-`nitro report` automates this. It is read-only and redacts MAC addresses and serial numbers (review output before posting).
+`nitro report` automates this. It is read-only and redacts UUIDs, MAC addresses, and long digit-only strings; review the output before posting.
 
 ---
 

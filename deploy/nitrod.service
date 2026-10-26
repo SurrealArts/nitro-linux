@@ -1,5 +1,5 @@
 [Unit]
-Description=nitro daemon
+Description=nitro daemon (keyboard effects, thermal polling)
 After=systemd-modules-load.service nitro-apply.service
 ConditionPathExists=/sys/devices/platform/nitro
 
@@ -8,6 +8,16 @@ Type=simple
 ExecStart=/usr/local/bin/nitrod
 Restart=on-failure
 RestartSec=2
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

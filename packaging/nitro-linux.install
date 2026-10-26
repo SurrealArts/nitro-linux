@@ -1,3 +1,4 @@
+#!/bin/bash
 _install_config() {
   if [ ! -e /etc/nitro.conf ]; then
     install -Dm644 /usr/share/nitro-linux/nitro.conf /etc/nitro.conf

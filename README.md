@@ -178,7 +178,7 @@ Source build: `linux-headers`, `dkms`, `make`, `gcc`, `sudo`
 
 - secure boot: `mokutil` + `openssl`
 
-Runtime: Python 3.8+, `nvidia-smi` for GPU sensors
+Runtime: Python 3.9+ (tested on 3.9 and 3.13), `nvidia-smi` for GPU sensors
 
 ## Notes
 

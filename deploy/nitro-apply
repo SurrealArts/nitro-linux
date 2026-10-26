@@ -33,18 +33,8 @@ if [ -f "$CAP_FILE" ]; then
       esac
     done
   done < "$CAP_FILE"
-elif grep -q "Nitro AN515-57" /sys/class/dmi/id/product_name 2>/dev/null; then
-  HAS_FAN=1
-  FAN_COUNT=2
-  HAS_FAN_MODE=1
-  HAS_PROFILE=1
-  HAS_RGB=1
-  RGB_ZONES=4
-  HAS_DYN=1
-  DYN_EFFECTS=5
-  HAS_COOLBOOST=1
 else
-  echo "nitro-apply: capabilities unavailable and model unverified; skipping" >&2
+  echo "nitro-apply: capabilities unavailable; skipping" >&2
   exit 0
 fi
 

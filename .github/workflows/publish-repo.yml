@@ -22,7 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check tag matches PKGBUILD
+      - name: Check tag matches PKGBUILD and version consistency
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
@@ -31,6 +31,9 @@ jobs:
             echo "Tag v$tag_version does not match PKGBUILD pkgver $pkg_version" >&2
             exit 1
           fi
+          python3 tools/check_version.py
+          python3 tools/check_models.py
+          python3 tools/check_install_drift.py
 
       - name: Build and sign package repository
         env:

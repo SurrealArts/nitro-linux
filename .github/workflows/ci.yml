@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, models]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile check
+        run: |
+          python -m py_compile \
+            daemon/nitrod.py \
+            tui/nitro-linux.py \
+            tools/nitro.py \
+            tools/model.py \
+            tools/check_version.py \
+            tools/check_models.py \
+            tools/check_install_drift.py \
+            tools/bump_version.py
+
+      - name: Install ruff
+        run: python -m pip install ruff
+
+      - name: Ruff
+        run: ruff check --select E9,F63,F7,F82 daemon tui tools
+
+  install-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - run: python tools/check_install_drift.py
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        run: shellcheck -S warning deploy/install.sh deploy/uninstall.sh packaging/nitro-linux.install
+
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - run: python tools/check_version.py
+
+  models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - run: python tools/check_models.py
+
+  kernel:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install git and kernel headers
+        run: pacman -Syu --noconfirm --needed git linux-headers
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Build module
+        run: make KERNELDIR="$(ls -d /usr/lib/modules/*/build | head -n1)" W=1

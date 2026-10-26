@@ -24,6 +24,7 @@ package() {
   install -Dm755 "$src/tui/nitro-linux.py" "$pkgdir/usr/bin/nitro-linux"
   install -Dm755 "$src/daemon/nitrod.py" "$pkgdir/usr/bin/nitrod"
   install -Dm644 "$src/tools/model.py" "$pkgdir/usr/lib/nitro/model.py"
+  install -Dm644 "$src/VERSION" "$pkgdir/usr/lib/nitro/VERSION"
   install -Dm755 "$src/deploy/nitro-apply" "$pkgdir/usr/bin/nitro-apply"
 
   install -Dm644 "$src/deploy/nitro-modules.conf" "$pkgdir/etc/modules-load.d/nitro.conf"
@@ -39,6 +40,7 @@ package() {
     "$pkgdir/usr/lib/systemd/system/nitro-apply.service"
 
   install -Dm644 "$src/dkms.conf" "$pkgdir/usr/src/nitro-$pkgver/dkms.conf"
+  install -Dm644 "$src/VERSION" "$pkgdir/usr/src/nitro-$pkgver/VERSION"
   install -Dm644 "$src/Makefile" "$pkgdir/usr/src/nitro-$pkgver/Makefile"
   install -Dm644 "$src/src/nitro.c" "$pkgdir/usr/src/nitro-$pkgver/src/nitro.c"
 

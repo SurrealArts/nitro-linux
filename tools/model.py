@@ -17,11 +17,9 @@ CAP_LED_CLASS = 1 << 7
 
 PROFILE_NONE = 0
 PROFILE_FTBL = 1
-PROFILE_OPMS = 2
 
 COOLBOOST_NONE = 0
 COOLBOOST_EC10 = 1
-COOLBOOST_WMI = 2
 
 
 @dataclass(frozen=True)
@@ -32,9 +30,6 @@ class NitroQuirks:
     profile_backend: int
     coolboost_backend: int
     fan_count: int
-    has_hwmon: bool
-    has_platform_profile: bool
-    has_led_class: bool
     board_name: Optional[str] = None
     tested_bios: Optional[str] = None
     probe: bool = False
@@ -50,14 +45,14 @@ class NitroQuirks:
             caps["fan_mode"] = 1
         if self.has_cap(CAP_HWMON):
             caps["hwmon"] = 1
-        if self.has_cap(CAP_PLATFORM_PROFILE):
-            caps["profile"] = "ftbl" if self.profile_backend == PROFILE_FTBL else "opms"
+        if self.has_cap(CAP_PLATFORM_PROFILE) and self.profile_backend == PROFILE_FTBL:
+            caps["profile"] = "ftbl"
         if self.has_cap(CAP_RGB):
             caps["rgb"] = self.rgb_zones
         if self.has_cap(CAP_RGB_DYNAMIC):
             caps["dyn"] = self.dynamic_effects
-        if self.has_cap(CAP_COOLBOOST):
-            caps["coolboost"] = "ec10" if self.coolboost_backend == COOLBOOST_EC10 else "wmi"
+        if self.has_cap(CAP_COOLBOOST) and self.coolboost_backend == COOLBOOST_EC10:
+            caps["coolboost"] = "ec10"
         if self.has_cap(CAP_LED_CLASS):
             caps["led"] = 1
         return caps
@@ -67,44 +62,11 @@ class NitroQuirks:
         return " ".join(f"{k}={v}" for k, v in sorted(d.items()))
 
 
-MODEL_QUIRKS = {
-    "Nitro AN515-57": NitroQuirks(
-        capabilities=(
-            CAP_FAN | CAP_FAN_MODE | CAP_HWMON | CAP_PLATFORM_PROFILE |
-            CAP_RGB | CAP_RGB_DYNAMIC | CAP_COOLBOOST | CAP_LED_CLASS
-        ),
-        rgb_zones=4,
-        dynamic_effects=5,
-        profile_backend=PROFILE_FTBL,
-        coolboost_backend=COOLBOOST_EC10,
-        fan_count=2,
-        has_hwmon=True,
-        has_platform_profile=True,
-        has_led_class=True,
-        board_name="Scala_TLS",
-        tested_bios="V1.22",
-    ),
-}
-
-
 def _dmi(name: str) -> str:
     try:
         return pathlib.Path(f"/sys/class/dmi/id/{name}").read_text().strip()
     except OSError:
         return ""
-
-
-def detect_quirks() -> Optional[NitroQuirks]:
-    product = _dmi("product_name")
-    board = _dmi("board_name")
-
-    if product in MODEL_QUIRKS:
-        q = MODEL_QUIRKS[product]
-        if q.board_name and q.board_name != board:
-            return None
-        return q
-
-    return None
 
 
 def find_platform_profile() -> Optional[pathlib.Path]:
@@ -151,9 +113,9 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
     coolboost = caps.get("coolboost")
     led = caps.get("led") == "1"
 
-    if profile not in (None, "ftbl", "opms"):
+    if profile not in (None, "ftbl"):
         return UNKNOWN_QUIRKS
-    if coolboost not in (None, "ec10", "wmi"):
+    if coolboost not in (None, "ec10"):
         return UNKNOWN_QUIRKS
     if rgb < 0 or dyn < 0:
         return UNKNOWN_QUIRKS
@@ -189,18 +151,13 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
         dynamic_effects=dyn,
         profile_backend=(
             PROFILE_NONE if not profile
-            else PROFILE_FTBL if profile == "ftbl"
-            else PROFILE_OPMS
+            else PROFILE_FTBL
         ),
         coolboost_backend=(
             COOLBOOST_NONE if not coolboost
-            else COOLBOOST_EC10 if coolboost == "ec10"
-            else COOLBOOST_WMI
+            else COOLBOOST_EC10
         ),
         fan_count=fan_count,
-        has_hwmon=hwmon,
-        has_platform_profile=bool(profile),
-        has_led_class=led,
         probe=caps.get("probe") == "1",
     )
 
@@ -212,9 +169,6 @@ UNKNOWN_QUIRKS = NitroQuirks(
     profile_backend=PROFILE_NONE,
     coolboost_backend=COOLBOOST_NONE,
     fan_count=0,
-    has_hwmon=False,
-    has_platform_profile=False,
-    has_led_class=False,
 )
 
 
@@ -225,20 +179,11 @@ def get_quirks() -> NitroQuirks:
             return _quirks_from_kernel(kernel_caps)
         except (TypeError, ValueError):
             return UNKNOWN_QUIRKS
-
-    q = detect_quirks()
-    if q:
-        return q
-
     return UNKNOWN_QUIRKS
 
 
 def get_zones(quirks: NitroQuirks) -> tuple:
-    if quirks.rgb_zones == 4:
-        return (1, 2, 4, 8)
-    elif quirks.rgb_zones == 1:
-        return (1,)
-    return ()
+    return (1, 2, 4, 8)[:max(0, min(quirks.rgb_zones, 4))]
 
 
 def get_effects(quirks: NitroQuirks) -> tuple:
@@ -257,8 +202,6 @@ ZONES = get_zones(QUIRKS)
 EFFECTS = get_effects(QUIRKS)
 EFFECT_NAMES = get_effect_names(QUIRKS)
 
-NITRO_NZONES = len(ZONES)
-ZONE_IDS = ZONES
 EFFECT_DEFAULTS = {
     1: (4, (255, 0, 255)),
     2: (3, (0, 255, 255)),
@@ -279,9 +222,9 @@ def main():
     print(f"Profile backend: {q.profile_backend}")
     print(f"CoolBoost backend: {q.coolboost_backend}")
     print(f"Fan count: {q.fan_count}")
-    print(f"Has hwmon: {q.has_hwmon}")
-    print(f"Has platform_profile: {q.has_platform_profile}")
-    print(f"Has led_class: {q.has_led_class}")
+    print(f"Has hwmon: {q.has_cap(CAP_HWMON)}")
+    print(f"Has platform_profile: {q.has_cap(CAP_PLATFORM_PROFILE)}")
+    print(f"Has led_class: {q.has_cap(CAP_LED_CLASS)}")
     print(f"Zones: {ZONES}")
     print(f"Effects: {EFFECTS}")
 
