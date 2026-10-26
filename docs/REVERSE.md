@@ -8,7 +8,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 
 | Arg1 | Dir | Effect                                                                                                                                    |
 | ---- | --- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 0x02 | SET | LED/zones-on bitmap (`BIT(3)\|0xF<<40` on AN515-57)                                                                                       |
+| 0x02 | SET | LED/zones-on bitmap (`BIT(3)` zones-on + zone mask from quirk; AN515-57 uses `0xF<<40`)                                                   |
 | 0x05 | GET | sysinfo via EC GGSI (also sets `PSEE=1` as a side effect). Selectors: 1 temp, 2 cpu fan RPM, 6 gpu fan RPM                                |
 | 0x06 | SET | static zone RGB: `[zone 1/2/4/8, R, G, B]`                                                                                                |
 | 0x07 | GET | static zone RGB                                                                                                                           |
@@ -19,7 +19,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                               |
 | 0x13 | GET | fan-table byte                                                                                                                            |
 | 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
-| 0x15 | GET | 16B effect state (shifted by one leading zero byte)                                                                                       |
+| 0x15 | GET | 16B effect state (shifted by one leading zero byte; driver checks status byte at offset 0)                                                |
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 

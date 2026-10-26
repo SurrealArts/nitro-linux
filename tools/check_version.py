@@ -44,11 +44,17 @@ expect(".SRCINFO source tag", m.group(1).strip() if m else None, want)
 
 # src/nitro.c
 nitro_c = read("src/nitro.c")
-m = re.search(r'MODULE_VERSION\("([^"]+)"\)', nitro_c)
-expect("src/nitro.c MODULE_VERSION", m.group(1) if m else None, want)
+if "MODULE_VERSION(NITRO_VERSION)" not in nitro_c:
+    errors.append("src/nitro.c: missing MODULE_VERSION(NITRO_VERSION)")
+if 'pr_info("v%s loading' not in nitro_c:
+    errors.append('src/nitro.c: missing pr_info("v%s loading')
 
-m = re.search(r'pr_info\("v([0-9.]+) loading', nitro_c)
-expect("src/nitro.c pr_info", m.group(1) if m else None, want)
+# Makefile
+makefile = read("Makefile")
+if "NITRO_VERSION := $(shell cat $(src)/VERSION" not in makefile:
+    errors.append("Makefile: missing NITRO_VERSION from VERSION")
+if 'ccflags-y += -DNITRO_VERSION=' not in makefile:
+    errors.append("Makefile: missing ccflags-y NITRO_VERSION define")
 
 # daemon/nitrod.py
 m = re.search(r'^VERSION = "([^"]+)"', read("daemon/nitrod.py"), re.M)

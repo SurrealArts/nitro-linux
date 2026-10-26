@@ -7,6 +7,9 @@ KERNELDIR := $(KERNEL_DIR)
 endif
 PWD := $(shell pwd)
 
+NITRO_VERSION := $(shell cat $(src)/VERSION 2>/dev/null || echo "unknown")
+ccflags-y += -DNITRO_VERSION=\"$(NITRO_VERSION)\"
+
 all:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 

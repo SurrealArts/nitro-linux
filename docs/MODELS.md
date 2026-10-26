@@ -33,7 +33,30 @@ This means:
 
 - Adding a model = adding a quirk table entry in the kernel, not rewriting userspace
 - The same package works across models with different feature sets
-- Unsupported features are gracefully hidden, not broken (unsupported features will not fail module initialization)
+- Unsupported features are gracefully hidden, not broken (optional subsystems degrade at init; module load succeeds)
+
+### Quirk invariants (code-enforced)
+
+Every quirk entry is validated at module load (`nitro_validate_quirks()`). The invariants are:
+
+- `capabilities` uses only defined bits
+- `rgb_zones` [0, 4]; if `CAP_RGB` then `rgb_zones > 0`
+- `dynamic_effects` [0, 5]; if `CAP_RGB_DYNAMIC` then `dynamic_effects > 0`
+- `fan_count` [0, 2]; if `CAP_FAN` then `fan_count > 0`
+- `CAP_FAN_MODE` requires `CAP_FAN`
+- `CAP_LED_CLASS` requires `CAP_RGB`
+- `CAP_RGB_DYNAMIC` requires `CAP_RGB`
+- `CAP_PLATFORM_PROFILE` requires `profile_backend == FTBL`
+- `CAP_COOLBOOST` requires `coolboost_backend == EC10`
+- Backends are `NONE` or the single supported type (`FTBL` / `EC10`)
+
+A probe quirk (used with `probe=1`) has no capabilities and `NONE` backends.
+
+---
+
+### Fan duty 0 note
+
+On AN515-57, duty 0 does **not** stop the fans; firmware maps it to ~2k–3k RPM. Duties 1–19 are real low duties (RPM increases with duty). The driver logs `pr_info` for duty 0 and retains a `pr_warn` for 1–19.
 
 ---
 
