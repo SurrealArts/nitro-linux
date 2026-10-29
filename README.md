@@ -112,7 +112,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 #### Configuration and state
 
-- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while both fans are Auto.
+- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
 - `/etc/modules-load.d/nitro.conf`: loads the `nitro` kernel module at boot; removed on uninstall.
 - `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, and the `profile_ac`/`profile_battery` keys; kept on uninstall.
 - `/var/lib/nitro/history.db`: 24-hour fan, temperature, and duty history written by `nitrod`; kept on uninstall.
@@ -139,7 +139,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 - `nitro` kernel module: `/usr/lib/modules/<kernel>/updates/dkms/nitro.ko.zst`; DKMS source `/usr/src/nitro-<version>/`, build state `/var/lib/dkms/nitro/<version>/`.
 - `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
-- `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the four keyboard zones.
+- `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the keyboard zones (up to four).
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`) and `coretemp` package temperature when present.
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
 - `/sys/class/power_supply/*/online`: AC/battery state that selects `profile_ac` or `profile_battery`.

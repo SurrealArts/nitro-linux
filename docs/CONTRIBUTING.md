@@ -44,16 +44,17 @@ cat /sys/devices/platform/nitro/capabilities
 nitro report
 ```
 
-Probe mode creates read-only hardware attributes, does not register hwmon,
-LEDs, or platform profile, and limits `wmi_raw` to read methods. Do not use
-`modprobe -f`, `insmod`, or patched DMI strings.
+Probe mode exposes read-only attributes for the capabilities the probe entry
+advertises, does not register hwmon, LEDs, or platform profile, and limits
+`wmi_raw` to read methods. Do not use `modprobe -f`, `insmod`, or patched DMI
+strings.
 
 ---
 
 ## What happens next
 
 1. Your report goes into the Candidates table in `docs/MODELS.md`
-2. If the DMI/WMI matches a known platform, we may add a **read-only probe** entry; you run it with `probe=1`
+2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
 3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost, one at a time
 4. With recorded evidence, the model gets a quirk entry and moves to **Verified**
 

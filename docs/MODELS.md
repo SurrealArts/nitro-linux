@@ -47,16 +47,21 @@ Every quirk entry is validated at module load (`nitro_validate_quirks()`). The i
 - `CAP_LED_CLASS` requires `CAP_RGB`
 - `CAP_RGB_DYNAMIC` requires `CAP_RGB`
 - `CAP_PLATFORM_PROFILE` requires `profile_backend == FTBL`
-- `CAP_COOLBOOST` requires `coolboost_backend == EC10`
+- `CAP_COOLBOOST` requires `CAP_FAN_MODE` and `coolboost_backend == EC10`
 - Backends are `NONE` or the single supported type (`FTBL` / `EC10`)
 
-A probe quirk (used with `probe=1`) has no capabilities and `NONE` backends.
+A probe quirk (used with `probe=1`) is validated separately. It may advertise
+read-only capabilities (`CAP_FAN`, `CAP_FAN_MODE`, `CAP_HWMON`, `CAP_RGB`,
+`CAP_RGB_DYNAMIC`) so the probe can read sensors, fan state, and lighting, but
+it must use `NONE` backends and must not set `CAP_COOLBOOST`,
+`CAP_PLATFORM_PROFILE`, or `CAP_LED_CLASS`: those are unverified write paths,
+and probe mode does not register LED class or platform profile devices.
 
 ---
 
 ### Fan duty 0 note
 
-On AN515-57, duty 0 does **not** stop the fans; firmware maps it to ~2k–3k RPM. Duties 1–19 are real low duties (RPM increases with duty). The driver logs `pr_info` for duty 0 and retains a `pr_warn` for 1–19.
+On AN515-57, duty 0 does **not** stop the fans; firmware maps it to ~2k–3k RPM. Duties 1–19 are real low duties (RPM increases with duty). The driver logs duty 0 at info level and warns for 1–19; both messages are rate-limited.
 
 ---
 
