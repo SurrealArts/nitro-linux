@@ -103,14 +103,16 @@ def status():
             print(f"platform_profile: {profile_path.read_text().strip()}")
         except OSError as e:
             print(f"platform_profile: MISSING ({e})")
-    print("--- dmesg nitro ---")
+    print("--- journal nitro ---")
     try:
-        out = subprocess.run(["sudo", "dmesg"], capture_output=True, text=True, timeout=5)
+        out = subprocess.run(
+            ["journalctl", "-k", "-b", "-0", "--no-pager"],
+            capture_output=True, text=True, timeout=5)
         for line in out.stdout.splitlines():
             if "nitro" in line.lower():
                 print(line[-220:])
     except Exception as e:
-        print(f"dmesg failed: {e}")
+        print(f"journalctl failed: {e}")
 
 def set_static(zone, r, g, b):
     require_writable()
@@ -120,7 +122,9 @@ def set_static(zone, r, g, b):
     if zone not in ZONE_KEYS:
         raise SystemExit(f"zone must be one of {list(ZONE_KEYS)}")
     for v in (r, g, b):
-        assert 0 <= int(v) <= 255
+        iv = int(v)
+        if not 0 <= iv <= 255:
+            raise SystemExit(f"RGB value {v} out of range (0-255)")
     (BASE / "kbd_static").write_text(f"{zone} {r} {g} {b}")
     print(f"set zone {zone} to {r} {g} {b}: {read('kbd_static')}")
 
@@ -128,13 +132,13 @@ def set_fan(which, duty):
     require_writable()
     if not QUIRKS.has_cap(CAP_FAN):
         raise SystemExit("fan control not supported on this model")
-    assert which in ("cpu", "gpu"), "which cpu|gpu"
+    if which not in ("cpu", "gpu"):
+        raise SystemExit("which fan must be 'cpu' or 'gpu'")
     if which == "gpu" and QUIRKS.fan_count < 2:
         raise SystemExit("GPU fan not supported on this model")
     duty = int(duty)
-    assert 0 <= duty <= 100
-    if duty < 20:
-        print("WARNING: very low duty, overheat risk")
+    if not 0 <= duty <= 100:
+        raise SystemExit("fan duty must be between 0 and 100")
     (BASE / f"fan_{which}").write_text(str(duty))
     print(f"fan_{which}: {read(f'fan_{which}')}")
 
@@ -145,7 +149,8 @@ def set_coolboost(value):
     if not QUIRKS.has_cap(CAP_FAN_MODE):
         raise SystemExit("CoolBoost requires fan mode support")
     v = str(value).lower()
-    assert v in ("on", "off", "1", "0"), "coolboost on|off"
+    if v not in ("on", "off", "1", "0"):
+        raise SystemExit("coolboost must be 'on' or 'off'")
     on = v in ("on", "1")
     # Keep the daemon's desired state in sync when it is running.  The daemon
     # is the source of truth for reapply/restart; fall back to raw sysfs when
@@ -173,7 +178,8 @@ def set_dyn(mode, speed, brightness, direction, r, g, b):
         ("r", int(r), 0, 255),
         ("g", int(g), 0, 255),
         ("b", int(b), 0, 255)]:
-        assert lo <= v <= hi, f"{name} out of range"
+        if not lo <= v <= hi:
+            raise SystemExit(f"{name} out of range ({lo}-{hi})")
     (BASE / "kbd_dynamic").write_text(f"{mode} {speed} {brightness} {direction} {r} {g} {b}")
     print(f"kbd_dynamic: {read('kbd_dynamic')}")
 
@@ -563,10 +569,20 @@ def _get_version():
                 return f"nitro-linux {line.split(':', 1)[1].strip()} (module)"
     except Exception:
         pass
-    try:
-        return f"nitro-linux {pathlib.Path('VERSION').read_text().strip()} (source)"
-    except OSError:
-        return "nitro-linux unknown"
+    here = pathlib.Path(__file__).resolve().parent
+    for p in (
+        here / "VERSION",
+        here.parent / "VERSION",
+        pathlib.Path("/usr/lib/nitro/VERSION"),
+        pathlib.Path("/usr/local/lib/nitro/VERSION"),
+    ):
+        try:
+            v = p.read_text().strip()
+            if v:
+                return f"nitro-linux {v} (source)"
+        except OSError:
+            pass
+    return "nitro-linux unknown"
 
 
 def _is_acer_nitro():
@@ -1393,6 +1409,7 @@ def usage():
     prog = pathlib.Path(sys.argv[0]).name
     print("usage:")
     print(f"    {prog} [status]")
+    print(f"    {prog} --version")
     print("               | rgb <zone 1|2|4|8> <r> <g> <b>")
     print("               | fan <cpu|gpu> <0-100>")
     print("               | coolboost <on|off>          (fans must be auto)")
@@ -1412,10 +1429,14 @@ def usage():
     print("    the TUI needs group nitro for /run/nitro.sock:")
     print("    sudo usermod -aG nitro \"$USER\", then log out and back in")
     print("    key commands are user-level; do not run them with sudo")
-    print("    report is read-only; run as your user or with sudo for dmesg")
+    print("    fan duty 0 is the firmware minimum on AN515-57, not off")
+    print("    report is read-only; kernel log lines come from journalctl")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] in ("status",):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V", "version"):
+        print(_get_version())
+        sys.exit(0)
+    elif len(sys.argv) < 2 or sys.argv[1] in ("status",):
         status()
     elif sys.argv[1] in ("help", "-h", "--help"):
         usage()
@@ -1433,7 +1454,9 @@ if __name__ == "__main__":
         require_writable()
         if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
             raise SystemExit("platform profile not supported on this model")
-        assert sys.argv[2] in ("low-power", "quiet", "balanced", "balanced-performance", "performance"), "bad profile"
+        valid_profiles = ("low-power", "quiet", "balanced", "balanced-performance", "performance")
+        if sys.argv[2] not in valid_profiles:
+            raise SystemExit("bad profile: " + ", ".join(valid_profiles))
         profile_path = find_platform_profile()
         if profile_path is None:
             raise SystemExit("platform profile not found")

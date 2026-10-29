@@ -8,15 +8,18 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 
 | Arg1 | Dir | Effect                                                                                                                                    |
 | ---- | --- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 0x02 | SET | LED/zones-on bitmap (`BIT(3)` zones-on + zone mask from quirk; AN515-57 uses `0xF<<40`)                                                   |
 | 0x05 | GET | sysinfo via EC GGSI (also sets `PSEE=1` as a side effect). Selectors: 1 temp, 2 cpu fan RPM, 6 gpu fan RPM                                |
 | 0x06 | SET | static zone RGB: `[zone 1/2/4/8, R, G, B]`                                                                                                |
 | 0x07 | GET | static zone RGB                                                                                                                           |
+| 0x0E | SET | fan behavior (`bitmap, 0, cpu \| gpu<<6`)                                                                                                 |
+| 0x0F | GET | fan behavior (status, modes)                                                                                                              |
 | 0x10 | SET | fan duty 0-100 (`[1=cpu/4=gpu, duty]`; firmware range-checks)                                                                             |
 | 0x11 | GET | fan duty                                                                                                                                  |
 | 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                               |
 | 0x13 | GET | fan-table byte                                                                                                                            |
 | 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
-| 0x15 | GET | 16B effect state (shifted by one leading zero byte)                                                                                       |
+| 0x15 | GET | 16B effect state (shifted by one leading zero byte; driver checks status byte at offset 0)                                                |
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
@@ -52,4 +55,4 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `wmi_raw` sysfs node sends raw `method + bytes` calls for probing.
+- `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected.

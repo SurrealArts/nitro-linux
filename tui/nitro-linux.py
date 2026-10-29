@@ -6,8 +6,7 @@ Interactive TUI.
 
 ? shows the full legend
 R re-applies the saved state
-q / Esc / Ctrl+Q close the UI
-Q stops daemon
+q / Q / Esc / Ctrl+Q close the UI
 
 keys
     fans        A Auto, S Max, D Custom     custom:  (. /) cpu -+5, (; ') gpu -+5
@@ -40,7 +39,10 @@ def project_version():
     here = os.path.dirname(os.path.abspath(__file__))
     for p in (
         os.path.join(here, "VERSION"),
-        os.path.join(here, os.pardir, "VERSION")):
+        os.path.join(here, os.pardir, "VERSION"),
+        "/usr/lib/nitro/VERSION",
+        "/usr/local/lib/nitro/VERSION",
+    ):
         try:
             with open(p) as f:
                 v = f.read().strip()
@@ -361,7 +363,6 @@ class UI:
         self.editor = None
         self.msg = ""
         self.msg_time = 0.0
-        self.confirm_stop = False
         self.show_help = False
         self.clicks = []
         self.eclicks = []
@@ -576,7 +577,7 @@ class UI:
             return
         on = self.coolboost_live()
         if on is None:
-            self.msg = "!! CoolBoost unavailable (driver 2.1.0 required)"
+            self.msg = "!! CoolBoost unavailable (not supported on this model)"
             self.msg_time = time.time()
             return
         self.send(
@@ -739,16 +740,6 @@ class UI:
         self.click(0, xg, 1, 2, ("refresh", -1))
         self.click(0, xg + len(grp) - 2, 1, 2, ("refresh", 1))
 
-    def confirm_modal(self):
-        h, w = self.h, self.w
-        txt = "stop daemon?   y / n"
-        bw = len(txt) + 4
-        y0, x0 = max(0, h // 2 - 1), max(0, w // 2 - bw // 2)
-        for i in range(3):
-            self.addstr(y0 + i, x0, " " * bw, 0)
-        self.box(y0, x0, 3, bw, "", active=True)
-        self.addstr(y0 + 1, x0 + 2, txt, curses.color_pair(C.FG) | curses.A_BOLD)
-
     def draw(self):
         s = self.s
         s.erase()
@@ -812,7 +803,7 @@ class UI:
             if not has_cool:
                 log_unavailable("CoolBoost", "CAP_COOLBOOST missing")
         self.topbar()
-        if self.editor or self.show_help or self.confirm_stop:
+        if self.editor or self.show_help:
             try:
                 for yy in range(h):
                     s.chgat(yy, 0, w, curses.color_pair(C.DIM))
@@ -828,8 +819,6 @@ class UI:
             self.clicks = base
         if self.show_help:
             self.help_overlay()
-        if self.confirm_stop:
-            self.confirm_modal()
         if os.environ.get("NITRO_TUI_DUMP_RECTS"):
             try:
                 with open(os.environ["NITRO_TUI_DUMP_RECTS"], "w") as f:
@@ -991,8 +980,8 @@ class UI:
             cols.append(("GPU", x0 + 12, "gpu", "'", ";", gpu_m, C.MID))
         for name, cx, which, kup, kdn, mode, pair in cols:
             active = mode == "custom"
-            duty = self.duty(which)
-            duty = 0 if duty is None else max(0, min(100, duty))
+            raw = self.duty(which)
+            duty = 0 if raw is None else max(0, min(100, raw))
             d = curses.color_pair(C.DIM)
             a = curses.color_pair(pair) | curses.A_BOLD if active else d
             self.addstr(ytop, cx - 1, name, d | curses.A_BOLD)
@@ -1000,7 +989,13 @@ class UI:
             knob = ty1 - int(round(duty / 100.0 * (ty1 - ty0)))
             for yy in range(ty0, ty1 + 1):
                 self.addstr(yy, cx, "●" if yy == knob else "┃", a if yy == knob else d)
-            self.addstr(ybot - 2, cx - 1, f"{duty:3d}%", a)
+            if raw is None:
+                label = "  --%"
+            elif duty == 0:
+                label = "0% fw min"
+            else:
+                label = f"{duty:3d}%"
+            self.addstr(ybot - 2, cx - 1, label, a)
             self.addstr(ybot - 1, cx - 1, f"({kdn})", d)
             if active:
                 self.click(ty0, cx - 1, ty1 - ty0 + 1, 3, ("duty_abs", which, ty0, ty1))
@@ -1404,7 +1399,7 @@ class UI:
             ("b", "  *(-)* faster    *(+)* slower      (top right, clickable)"),
             ("h", "global"),
             ("b", "  *(R)* reapply saved state"),
-            ("b", "  *(q)* close the ui    *(Q)* stop the daemon"),
+            ("b", "  *(q/Q)* close the ui"),
             ("s", ""),
             ("d", "every control is clickable and shows its key; any key closes"),
         ]
@@ -1638,6 +1633,8 @@ class UI:
         if self.editor is not None:
             self.editor_key(ch)
             return
+        if ch > 0x10FFFF:
+            return
         if QUIRKS.probe and ch not in (
             ord("?"), ord("F"), ord("-"), ord("="), ord("+"),
             ord("o"), ord("O"), ord("p"), ord("P")):
@@ -1864,27 +1861,34 @@ def main(stdscr):
 
 def runloop(ui):
     last = 0.0
-    last_sample = 0.0
+    last_sample_ts = None
+    last_error_ts = None
     while True:
         now = time.time()
         if now - last >= ui.refresh_ms / 1000.0:
             try:
                 ui.snap = rpc({"cmd": "status"})
-                if now - last_sample >= ui.refresh_ms / 2000.0:
+                sample_ts = (ui.snap.get("data") or {}).get("ts") or ui.snap.get("ts")
+                if sample_ts is None:
+                    sample_ts = int(now)
+                if sample_ts != last_sample_ts:
+                    last_sample_ts = sample_ts
+                    last_error_ts = None
                     data = ui.snap.get("data") or {}
                     ui.series.append({
                         k: num(data.get(k)) for k in
                         ("cpu_rpm", "gpu_rpm", "package_c", "gpu_c")})
-                    last_sample = now
                 if ui.msg and not ui.msg.startswith("!!") and now - ui.msg_time > 5:
                     ui.msg = ""
             except OSError as e:
                 ui.snap = {"data": {}, "desired": {}, "source": None, "daemon": {}}
-                if now - last_sample >= ui.refresh_ms / 2000.0:
+                last_sample_ts = None
+                err_ts = int(now)
+                if err_ts != last_error_ts:
+                    last_error_ts = err_ts
                     ui.series.append(
                         {"cpu_rpm": None, "gpu_rpm": None,
                         "package_c": None, "gpu_c": None})
-                    last_sample = now
                 if e.errno in (errno.EACCES, errno.EPERM):
                     ui.msg = "!! cannot access nitrod socket; add your user to group nitro, then log out and back in"
                 else:
@@ -1914,15 +1918,6 @@ def runloop(ui):
             if ch != curses.KEY_MOUSE or now - ui.help_t > 0.3:
                 ui.show_help = False
             continue
-        if ui.confirm_stop:
-            if ch in (ord("y"), ord("Y")):
-                try:
-                    rpc({"cmd": "stop"})
-                except OSError:
-                    pass
-                return 0
-            ui.confirm_stop = False
-            continue
         if ch == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
@@ -1938,17 +1933,17 @@ def runloop(ui):
             ui.editor_key(ch)
             last = 0.0
             continue
-        if ch in (ord("q"), 27, 17):
+        if ch in (ord("q"), ord("Q"), 27, 17):
             return 0
-        if ch == ord("Q"):
-            ui.confirm_stop = True
-            continue
         ui.key(ch)
         last = 0.0
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(curses.wrapper(main))
+        ret = curses.wrapper(main)
+        print("UI closed; if nitrod is still running, stop it with: sudo systemctl stop nitrod")
+        sys.exit(ret if isinstance(ret, int) else 0)
     except KeyboardInterrupt:
+        print("UI closed; if nitrod is still running, stop it with: sudo systemctl stop nitrod")
         sys.exit(0)

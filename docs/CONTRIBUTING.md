@@ -33,8 +33,9 @@ Open a **Model support report** issue and paste the output. Also include:
 
 ## Read-only probe (candidate models)
 
-Current probe table: **AN515-58, ANV15-51, ANV15-41**. If your model is listed,
-load the module in read-only mode:
+No model is currently in the probe table. A candidate probe entry is added only
+after a Model Support Report is triaged. Once a candidate probe entry exists for
+your model, you can load the module in read-only mode:
 
 ```bash
 sudo modprobe -r nitro 2>/dev/null || true
@@ -43,16 +44,17 @@ cat /sys/devices/platform/nitro/capabilities
 nitro report
 ```
 
-Probe mode creates read-only hardware attributes, does not register hwmon,
-LEDs, or platform profile, and limits `wmi_raw` to read methods. Do not use
-`modprobe -f`, `insmod`, or patched DMI strings.
+Probe mode exposes read-only attributes for the capabilities the probe entry
+advertises, does not register hwmon, LEDs, or platform profile, and limits
+`wmi_raw` to read methods. Do not use `modprobe -f`, `insmod`, or patched DMI
+strings.
 
 ---
 
 ## What happens next
 
-1. Your report goes into the candidate table in `docs/MODELS.md`
-2. If the DMI/WMI matches a known platform, we may add a **read-only probe** entry; you run it with `probe=1`
+1. Your report goes into the Candidates table in `docs/MODELS.md`
+2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
 3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost, one at a time
 4. With recorded evidence, the model gets a quirk entry and moves to **Verified**
 
@@ -74,7 +76,7 @@ This means:
 
 - Adding a model = adding a quirk table entry in the kernel, not rewriting userspace
 - The same package works across models with different feature sets
-- Unsupported features are gracefully hidden, not broken
+- Unsupported features are gracefully hidden, not broken (unsupported features will not fail module initialization)
 
 ---
 

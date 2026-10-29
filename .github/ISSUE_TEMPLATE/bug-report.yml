@@ -21,7 +21,7 @@ body:
     attributes:
       label: "nitro-linux version"
       description: "Run `nitro --version` or `pacman -Q nitro-linux`"
-      placeholder: "2.3.1-1"
+      placeholder: "e.g., 2.3.1-1"
     validations:
       required: true
 

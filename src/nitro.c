@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * nitro - Acer Nitro AN515-57 EC/WMI driver v2.3.1
- * (support for other models are to be added in later updates)
+ * nitro - Acer Nitro WMI driver
  *
- * Targets (current): Acer Nitro AN515-57 (Scala_TLS), BIOS V1.22.
- * (entry to remove soon)
+ * Targets: Acer Nitro family; verified model: AN515-57 (Scala_TLS), BIOS V1.22.
  *
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
  * Restores initial fan/RGB/FTBL/CoolBoost on unload. See docs/REVERSE.md.
@@ -29,10 +27,13 @@
 #include <linux/platform_profile.h>
 #include <linux/string.h>
 
+#ifndef NITRO_VERSION
+#define NITRO_VERSION "unknown"
+#endif
 MODULE_AUTHOR("SurrealArts");
-MODULE_DESCRIPTION("Acer Nitro WMI driver (hwmon + leds + platform_profile)");
+MODULE_DESCRIPTION("Acer Nitro WMI driver (fan, RGB, hwmon, platform_profile)");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.3.1");
+MODULE_VERSION(NITRO_VERSION);
 
 #define NITRO_WMI_GUID "7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
 #define NITRO_EC_COOLBOOST 0x10
@@ -68,11 +69,14 @@ MODULE_VERSION("2.3.1");
 #define NITRO_CAP_COOLBOOST		BIT(6)
 #define NITRO_CAP_LED_CLASS		BIT(7)
 
+#define NITRO_CAP_ALL \
+	(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON | \
+	NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB | NITRO_CAP_RGB_DYNAMIC | \
+	NITRO_CAP_COOLBOOST | NITRO_CAP_LED_CLASS)
+
 #define NITRO_MAX_ZONES			4
 #define NITRO_WMI_MAX_PAYLOAD		64
 #define NITRO_INPUT_MAX			128
-
-// Man I should refactor stuff better or something...
 
 enum nitro_fan_mode {
 	NITRO_FAN_MODE_AUTO		= 1,
@@ -91,13 +95,11 @@ enum nitro_ftbl {
 enum nitro_profile_backend {
 	NITRO_PROFILE_NONE		= 0,
 	NITRO_PROFILE_FTBL		= 1,
-	NITRO_PROFILE_OPMS		= 2,
 };
 
 enum nitro_coolboost_backend {
 	NITRO_COOLBOOST_NONE		= 0,
 	NITRO_COOLBOOST_EC10		= 1,
-	NITRO_COOLBOOST_WMI		= 2,
 };
 
 struct nitro_quirks {
@@ -127,7 +129,164 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.tested_bios = "V1.22",
 };
 
+static int nitro_validate_quirks(const struct nitro_quirks *q)
+{
+	if (!q)
+		return -EINVAL;
 
+	if (q->capabilities & ~NITRO_CAP_ALL) {
+		pr_err(
+			"quirks: unknown capability bits 0x%lx\n",
+			q->capabilities & ~NITRO_CAP_ALL);
+		return -EINVAL;
+	}
+
+	if (q->rgb_zones > NITRO_MAX_ZONES) {
+		pr_err(
+			"quirks: rgb_zones %u > max %u\n",
+			q->rgb_zones, NITRO_MAX_ZONES);
+		return -EINVAL;
+	}
+
+	if (q->dynamic_effects > 5) {
+		pr_err(
+			"quirks: dynamic_effects %u > 5\n",
+			q->dynamic_effects);
+		return -EINVAL;
+	}
+
+	if (q->fan_count > 2) {
+		pr_err(
+			"quirks: fan_count %u > 2\n",
+			q->fan_count);
+		return -EINVAL;
+	}
+
+	if ((
+		q->capabilities & NITRO_CAP_RGB) &&
+		!q->rgb_zones) {
+		pr_err("quirks: CAP_RGB set but rgb_zones == 0\n");
+		return -EINVAL;
+	}
+	if (
+		!(q->capabilities & NITRO_CAP_RGB) &&
+		q->rgb_zones) {
+		pr_err("quirks: rgb_zones > 0 but CAP_RGB not set\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_RGB_DYNAMIC) &&
+		!q->dynamic_effects) {
+		pr_err("quirks: CAP_RGB_DYNAMIC set but dynamic_effects == 0\n");
+		return -EINVAL;
+	}
+	if (
+		!(q->capabilities & NITRO_CAP_RGB_DYNAMIC) &&
+		q->dynamic_effects) {
+		pr_err("quirks: dynamic_effects > 0 but CAP_RGB_DYNAMIC not set\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * kbd_dynamic is the only consumer of dynamic_effects and it needs the
+	 * static RGB path for the per-zone writes, so dynamic RGB is never a
+	 * standalone capability.
+	 */
+	if (
+		(q->capabilities & NITRO_CAP_RGB_DYNAMIC) &&
+		!(q->capabilities & NITRO_CAP_RGB)) {
+		pr_err("quirks: CAP_RGB_DYNAMIC requires CAP_RGB\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_LED_CLASS) &&
+		!(q->capabilities & NITRO_CAP_RGB)) {
+		pr_err("quirks: CAP_LED_CLASS requires CAP_RGB\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_FAN) &&
+		!q->fan_count) {
+		pr_err("quirks: CAP_FAN set but fan_count == 0\n");
+		return -EINVAL;
+	}
+	if (
+		!(q->capabilities & NITRO_CAP_FAN) &&
+		q->fan_count) {
+		pr_err("quirks: fan_count > 0 but CAP_FAN not set\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_FAN_MODE) &&
+		!(q->capabilities & NITRO_CAP_FAN)) {
+		pr_err("quirks: CAP_FAN_MODE requires CAP_FAN\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * CoolBoost is an EC bit that only takes effect while the fans are in
+	 * auto mode, so a model without fan-mode control cannot expose it.
+	 */
+	if (
+		(q->capabilities & NITRO_CAP_COOLBOOST) &&
+		!(q->capabilities & NITRO_CAP_FAN_MODE)) {
+		pr_err("quirks: CAP_COOLBOOST requires CAP_FAN_MODE\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
+		q->profile_backend != NITRO_PROFILE_FTBL) {
+		pr_err("quirks: CAP_PLATFORM_PROFILE requires FTBL backend\n");
+		return -EINVAL;
+	}
+	if (
+		!(q->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
+		q->profile_backend != NITRO_PROFILE_NONE) {
+		pr_err("quirks: profile_backend set but CAP_PLATFORM_PROFILE not set\n");
+		return -EINVAL;
+	}
+
+	if (
+		(q->capabilities & NITRO_CAP_COOLBOOST) &&
+		q->coolboost_backend != NITRO_COOLBOOST_EC10) {
+		pr_err("quirks: CAP_COOLBOOST requires EC10 backend\n");
+		return -EINVAL;
+	}
+	if (
+		!(q->capabilities & NITRO_CAP_COOLBOOST) &&
+		q->coolboost_backend != NITRO_COOLBOOST_NONE) {
+		pr_err("quirks: coolboost_backend set but CAP_COOLBOOST not set\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/*
+ * Probe entries describe what may be *read* on an unverified model. They must
+ * never advertise a write path that has not been proven on that model, and
+ * probe mode does not register LED class or platform profile devices at all.
+ */
+static int nitro_validate_probe_quirks(const struct nitro_quirks *q)
+{
+	if (q->capabilities &
+	    (NITRO_CAP_COOLBOOST | NITRO_CAP_PLATFORM_PROFILE |
+	     NITRO_CAP_LED_CLASS)) {
+		pr_err("quirks: probe entry advertises unverified capabilities\n");
+		return -EINVAL;
+	}
+	if (q->coolboost_backend != NITRO_COOLBOOST_NONE ||
+	    q->profile_backend != NITRO_PROFILE_NONE) {
+		pr_err("quirks: probe entry must use NONE backends\n");
+		return -EINVAL;
+	}
+	return 0;
+}
 
 static struct platform_device *nitro_pdev;
 
@@ -420,8 +579,11 @@ static int nitro_set_fan(u8 which, u8 duty)
 		return -EINVAL;
 	if (duty > 100)
 		return -ERANGE;
-	if (duty < 20)
-		pr_warn("fan %s duty %u is very low, overheat risk\n",
+	if (duty == 0)
+		pr_info_ratelimited("fan %s duty 0 -> firmware minimum\n",
+			which == NITRO_FAN_CPU ? "cpu" : "gpu");
+	else if (duty < 20)
+		pr_warn_ratelimited("fan %s duty %u is very low, overheat risk\n",
 			which == NITRO_FAN_CPU ? "cpu" : "gpu", duty);
 	return nitro_bh_call(
 		NITRO_BH_SET_FAN,
@@ -528,11 +690,15 @@ static int nitro_set_dynamic_raw(const u8 *data16)
 static int nitro_get_dynamic_raw(u8 *data16)
 {
 	u8 in[4] = { 0, 0, 0, 0 };
+	u8 out[16] = { 0 };
+	int ret = nitro_bh_call(NITRO_BH_GET_DYN, in, sizeof(in), out, sizeof(out));
 
-	return nitro_bh_call(
-		NITRO_BH_GET_DYN,
-		in, sizeof(in),
-		data16, 16);
+	if (ret)
+		return ret;
+	if (out[0] != 0)
+		return -EPROTO;
+	memcpy(data16, out, sizeof(out));
+	return 0;
 }
 
 static int nitro_apply_static(
@@ -540,7 +706,12 @@ static int nitro_apply_static(
 	const u8 zones[NITRO_MAX_ZONES][3],
 	u8 brightness)
 {
-	u8 led[8] = { 0x08, 0, 0, 0, 0, 0x0F, 0, 0 };
+	/*
+	 * led[0] = 0x08 (BIT(3), "zones on") is AN515-57-verified only. If a new
+	 * model needs a different value, add a quirks field instead of editing
+	 * this function; see docs/REVERSE.md.
+	 */
+	u8 led[8] = { 0x08, 0, 0, 0, 0, 0, 0, 0 };
 	u8 out[8] = { 0 };
 	u8 bl[16] = { 0 };
 	u8 v0, v1;
@@ -552,6 +723,7 @@ static int nitro_apply_static(
 	ret = nitro_get_sysinfo(0, 0, &v0, &v1);
 	if (ret)
 		return ret;
+	led[5] = (u8)((1u << nzones) - 1);
 	ret = nitro_bh_call(
 		NITRO_BH_SET_LED,
 		led, sizeof(led),
@@ -880,7 +1052,7 @@ out:
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
-	pr_info("fan mode cpu=%u gpu=%u\n", cpu, gpu);
+	pr_info_ratelimited("fan mode cpu=%u gpu=%u\n", cpu, gpu);
 	return count;
 }
 static DEVICE_ATTR_RW(fan_mode);
@@ -895,6 +1067,11 @@ static ssize_t coolboost_show(
 	int ret;
 
 	if (!nitro)
+		return -ENODEV;
+	if (
+		!nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) ||
+		!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE) ||
+		nitro->quirks->coolboost_backend != NITRO_COOLBOOST_EC10)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_coolboost(&value);
@@ -921,7 +1098,8 @@ static ssize_t coolboost_store(
 		return -EPERM;
 	if (
 		!nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) ||
-		!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE))
+		!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE) ||
+		nitro->quirks->coolboost_backend != NITRO_COOLBOOST_EC10)
 		return -ENODEV;
 	if (count > NITRO_INPUT_MAX)
 		return -EINVAL;
@@ -954,7 +1132,7 @@ static ssize_t coolboost_store(
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
-	pr_info("CoolBoost %s\n", on ? "on" : "off");
+	pr_info_ratelimited("CoolBoost %s\n", on ? "on" : "off");
 	return count;
 }
 static DEVICE_ATTR_RW(coolboost);
@@ -969,6 +1147,10 @@ static ssize_t ftbl_show(
 	int ret;
 
 	if (!nitro)
+		return -ENODEV;
+	if (
+		!nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) ||
+		nitro->quirks->profile_backend != NITRO_PROFILE_FTBL)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_ftbl(&v);
@@ -1215,35 +1397,50 @@ static ssize_t wmi_raw_store(
 	size_t count)
 {
 	struct nitro_device *nitro = dev_get_drvdata(dev);
-	unsigned int vals[17];
-	u8 in[16];
+	char work[NITRO_INPUT_MAX + 1];
+	u8 in[16] = { 0 };
 	u8 out[16] = { 0 };
-	int n, i, ret;
+	unsigned int method = 0;
+	unsigned int val;
+	char *cur, *tok;
+	int n = 0, ret;
 
 	if (!nitro)
 		return -ENODEV;
 	if (count > NITRO_INPUT_MAX)
 		return -EINVAL;
-	n = sscanf(
-		buf,
-		"%u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u",
-		&vals[0], &vals[1], &vals[2], &vals[3], &vals[4], &vals[5],
-		&vals[6], &vals[7], &vals[8], &vals[9], &vals[10], &vals[11],
-		&vals[12], &vals[13], &vals[14], &vals[15], &vals[16]);
-	if (n < 1 || n > 17)
-		return -EINVAL;
-	for (i = 0; i < n; i++) {
-		if (vals[i] > 0xFF)
+	memcpy(work, buf, count);
+	work[count] = '\0';
+	cur = work;
+
+	/*
+	 * Parse whitespace-separated byte values. kstrtouint(..., 0, ...) keeps
+	 * the documented 0x/0 prefixes and rejects overflow with -ERANGE, which
+	 * sscanf("%i") into an int cannot do safely.
+	 */
+	while ((tok = strsep(&cur, " \t\n"))) {
+		if (!*tok)
+			continue;
+		if (n >= 17)
+			return -EINVAL;
+		ret = kstrtouint(tok, 0, &val);
+		if (ret)
+			return ret;
+		if (val > 0xFF)
 			return -ERANGE;
+		if (n == 0) {
+			method = val;
+			if (nitro->probe_mode && !nitro_read_only_method(method))
+				return -EPERM;
+		} else {
+			in[n - 1] = (u8)val;
+		}
+		n++;
 	}
-	if (n - 1 > 16)
+	if (n < 1)
 		return -EINVAL;
-	if (nitro->probe_mode && !nitro_read_only_method(vals[0]))
-		return -EPERM;
-	for (i = 0; i < n - 1; i++)
-		in[i] = (u8)vals[i + 1];
 	mutex_lock(&nitro->lock);
-	ret = nitro_bh_call(vals[0], in, n - 1, out, sizeof(out));
+	ret = nitro_bh_call(method, in, n - 1, out, sizeof(out));
 	nitro->wmi_raw_status = ret;
 	if (!ret) {
 		memcpy(nitro->wmi_raw_out, out, sizeof(out));
@@ -1252,10 +1449,10 @@ static ssize_t wmi_raw_store(
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
-	pr_info("wmi_raw method 0x%x inlen %d\n", vals[0], n - 1);
+	pr_info_ratelimited("wmi_raw method 0x%x inlen %d\n", method, n - 1);
 	return count;
 }
-static DEVICE_ATTR_RW(wmi_raw);
+static DEVICE_ATTR(wmi_raw, 0600, wmi_raw_show, wmi_raw_store);
 
 static ssize_t kbd_dynamic_show(
 	struct device *dev,
@@ -1578,6 +1775,11 @@ static int nitro_leds_register(struct device *parent, struct nitro_device *nitro
 		ret = devm_led_classdev_multicolor_register(parent, &nl->mc);
 		if (ret) {
 			pr_err("led zone %u register failed %d\n", nl->zone, ret);
+			while (i > 0) {
+				i--;
+				devm_led_classdev_multicolor_unregister(
+					parent, &nitro->leds[i].mc);
+			}
 			return ret;
 		}
 		for (j = 0; j < 3; j++)
@@ -1714,15 +1916,13 @@ static ssize_t capabilities_show(
 	if (nitro->capabilities & NITRO_CAP_HWMON)
 		n += sysfs_emit_at(buf, n, " hwmon=1");
 	if (nitro->capabilities & NITRO_CAP_PLATFORM_PROFILE)
-		n += sysfs_emit_at(buf, n, " profile=%s",
-			q->profile_backend == NITRO_PROFILE_FTBL ? "ftbl" : "opms");
+		n += sysfs_emit_at(buf, n, " profile=ftbl");
 	if (nitro->capabilities & NITRO_CAP_RGB)
 		n += sysfs_emit_at(buf, n, " rgb=%u", q->rgb_zones);
 	if (nitro->capabilities & NITRO_CAP_RGB_DYNAMIC)
 		n += sysfs_emit_at(buf, n, " dyn=%u", q->dynamic_effects);
 	if (nitro->capabilities & NITRO_CAP_COOLBOOST)
-		n += sysfs_emit_at(buf, n, " coolboost=%s",
-			q->coolboost_backend == NITRO_COOLBOOST_EC10 ? "ec10" : "wmi");
+		n += sysfs_emit_at(buf, n, " coolboost=ec10");
 	if (nitro->capabilities & NITRO_CAP_LED_CLASS)
 		n += sysfs_emit_at(buf, n, " led=1");
 	n += sysfs_emit_at(buf, n, "\n");
@@ -1730,6 +1930,12 @@ static ssize_t capabilities_show(
 }
 static DEVICE_ATTR_RO(capabilities);
 
+/*
+ * Every attribute in nitro_attrs must be handled here. There is no default
+ * allow path: a newly added attribute that is not listed below stays hidden
+ * even when its capability is present, so update this function together with
+ * nitro_attrs and the capabilities file.
+ */
 static umode_t nitro_attr_is_visible(
 	struct kobject *kobj,
 	struct attribute *attr,
@@ -1746,6 +1952,11 @@ static umode_t nitro_attr_is_visible(
 
 	if (!strcmp(attr->name, "capabilities"))
 		return mode;
+	/*
+	 * wmi_raw intentionally bypasses the probe-mode write mask: the store
+	 * handler rejects every non-read method in probe mode, and probing needs
+	 * to issue read methods through this file.
+	 */
 	if (!strcmp(attr->name, "wmi_raw"))
 		return mode;
 
@@ -1762,8 +1973,10 @@ static umode_t nitro_attr_is_visible(
 			return 0;
 	} else if (!strcmp(attr->name, "coolboost")) {
 		if (
-			!(nitro->capabilities & NITRO_CAP_COOLBOOST) ||
-			q->coolboost_backend == NITRO_COOLBOOST_NONE)
+			(nitro->capabilities &
+			 (NITRO_CAP_COOLBOOST | NITRO_CAP_FAN_MODE)) !=
+			(NITRO_CAP_COOLBOOST | NITRO_CAP_FAN_MODE) ||
+			q->coolboost_backend != NITRO_COOLBOOST_EC10)
 			return 0;
 	} else if (!strcmp(attr->name, "ftbl")) {
 		if (
@@ -1839,6 +2052,11 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 };
 MODULE_DEVICE_TABLE(dmi, nitro_dmi);
 
+/*
+ * Probe-only DMI entries. Each entry is added by a maintainer after a Model
+ * Support Report is triaged, and points at a quirks struct that advertises
+ * only read paths (see nitro_validate_probe_quirks()).
+ */
 static const struct dmi_system_id nitro_probe_dmi[] __initconst = {
 	{}
 };
@@ -1952,13 +2170,16 @@ static int __init nitro_init(void)
 	struct nitro_device *nitro;
 	struct device *hwmon;
 	struct device *pp;
+	bool probe_entry = false;
 	int ret;
 
-	pr_info("v2.3.1 loading (probe=%d)\n", probe_mode ? 1 : 0);
+	pr_info("v%s loading (probe=%d)\n", NITRO_VERSION, probe_mode ? 1 : 0);
 
 	if (probe_mode) {
 		match = dmi_first_match(nitro_probe_dmi);
-		if (!match)
+		if (match)
+			probe_entry = true;
+		else
 			match = dmi_first_match(nitro_dmi);
 	} else {
 		match = dmi_first_match(nitro_dmi);
@@ -1967,6 +2188,24 @@ static int __init nitro_init(void)
 		pr_err("DMI match failed for %s\n",
 			probe_mode ? "probe model" : "supported model");
 		return -ENODEV;
+	}
+
+	if (!match->driver_data) {
+		pr_err("DMI match has no quirks data\n");
+		return -EINVAL;
+	}
+
+	ret = nitro_validate_quirks(match->driver_data);
+	if (ret) {
+		pr_err("Quirks validation failed: %d\n", ret);
+		return ret;
+	}
+	if (probe_entry) {
+		ret = nitro_validate_probe_quirks(match->driver_data);
+		if (ret) {
+			pr_err("Probe quirks validation failed: %d\n", ret);
+			return ret;
+		}
 	}
 
 	if (!wmi_has_guid(NITRO_WMI_GUID)) {
@@ -1985,7 +2224,8 @@ static int __init nitro_init(void)
 	nitro->probe_mode = probe_mode;
 
 	if (disable_fan)
-		nitro->capabilities &= ~(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE);
+		nitro->capabilities &= ~(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
+			NITRO_CAP_COOLBOOST);
 	if (disable_hwmon)
 		nitro->capabilities &= ~NITRO_CAP_HWMON;
 	if (disable_profile)
@@ -2012,6 +2252,40 @@ static int __init nitro_init(void)
 	nitro_log_state(nitro);
 	mutex_unlock(&nitro->lock);
 
+	if (!nitro->probe_mode) {
+		if (nitro_has_cap(nitro, NITRO_CAP_HWMON)) {
+			hwmon = devm_hwmon_device_register_with_info(
+				&nitro_pdev->dev,
+				"nitro", nitro,
+				&nitro_hwmon_chip, NULL);
+			if (IS_ERR(hwmon)) {
+				ret = PTR_ERR(hwmon);
+				pr_warn("hwmon register failed %d; continuing without hwmon\n", ret);
+				nitro->capabilities &= ~NITRO_CAP_HWMON;
+			}
+		}
+
+		ret = nitro_leds_register(&nitro_pdev->dev, nitro);
+		if (ret) {
+			pr_warn("led register failed %d; continuing without led class\n", ret);
+			nitro->capabilities &= ~NITRO_CAP_LED_CLASS;
+		}
+
+		if (
+			nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
+			nitro->quirks->profile_backend == NITRO_PROFILE_FTBL) {
+			pp = devm_platform_profile_register(
+				&nitro_pdev->dev,
+				"nitro", nitro,
+				&nitro_profile_ops);
+			if (IS_ERR(pp)) {
+				ret = PTR_ERR(pp);
+				pr_warn("platform_profile register failed %d; continuing without it\n", ret);
+				nitro->capabilities &= ~NITRO_CAP_PLATFORM_PROFILE;
+			}
+		}
+	}
+
 	ret = sysfs_create_groups(&nitro_pdev->dev.kobj, nitro_groups);
 	if (ret)
 		goto err_pdev;
@@ -2019,36 +2293,6 @@ static int __init nitro_init(void)
 	if (nitro->probe_mode) {
 		pr_info("probe mode: writes disabled, wmi_raw limited to read-only methods\n");
 		return 0;
-	}
-
-	if (nitro_has_cap(nitro, NITRO_CAP_HWMON)) {
-		hwmon = devm_hwmon_device_register_with_info(
-			&nitro_pdev->dev,
-			"nitro", nitro,
-			&nitro_hwmon_chip, NULL);
-		if (IS_ERR(hwmon)) {
-			ret = PTR_ERR(hwmon);
-			pr_err("hwmon register failed %d\n", ret);
-			goto err_groups;
-		}
-	}
-
-	ret = nitro_leds_register(&nitro_pdev->dev, nitro);
-	if (ret)
-		goto err_groups;
-
-	if (
-		nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
-		nitro->quirks->profile_backend == NITRO_PROFILE_FTBL) {
-		pp = devm_platform_profile_register(
-			&nitro_pdev->dev,
-			"nitro", nitro,
-			&nitro_profile_ops);
-		if (IS_ERR(pp)) {
-			ret = PTR_ERR(pp);
-			pr_err("platform_profile register failed %d\n", ret);
-			goto err_groups;
-		}
 	}
 
 	pr_info("capabilities: fan=%u fan_mode=%u hwmon=%u profile=%u rgb=%u dyn=%u coolboost=%u led=%u\n",
@@ -2062,8 +2306,6 @@ static int __init nitro_init(void)
 		!!nitro_has_cap(nitro, NITRO_CAP_LED_CLASS));
 	return 0;
 
-err_groups:
-	sysfs_remove_groups(&nitro_pdev->dev.kobj, nitro_groups);
 err_pdev:
 	platform_set_drvdata(nitro_pdev, NULL);
 	platform_device_unregister(nitro_pdev);

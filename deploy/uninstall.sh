@@ -62,10 +62,12 @@ echo "[*] remove source files"
 disable_key
 rm -f /etc/systemd/system/nitro-apply.service /etc/systemd/system/nitrod.service
 rm -f /usr/local/bin/nitro-apply /usr/local/bin/nitrod /usr/local/bin/nitro-linux /usr/local/bin/nitro
-rm -f /usr/local/lib/nitro/model.py
-rmdir /usr/local/lib/nitro 2>/dev/null || true
+rm -rf /usr/local/lib/nitro
 rm -f /usr/local/lib/systemd/user/nitro-key.service
 rm -f /etc/modules-load.d/nitro.conf
+# Leftovers from older source installs and from package-style layouts.
+rm -f /usr/lib/sysusers.d/nitro-linux.conf /usr/local/lib/sysusers.d/nitro-linux.conf
+rm -f /usr/lib/tmpfiles.d/nitro-linux.conf /usr/local/lib/tmpfiles.d/nitro-linux.conf
 systemctl daemon-reload
 echo "[*] dkms remove all nitro versions (keeps /etc/nitro.conf, /var/lib/nitro, and ~/.config/nitro)"
 for v in $(dkms status 2>/dev/null | sed -n 's#^nitro/\([^,]*\),.*#\1#p' | sort -u); do

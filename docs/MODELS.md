@@ -8,6 +8,16 @@
 
 ---
 
+## Candidates (read-only probe)
+
+No model is currently in the probe table. A probe entry is added only after a
+[Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged.
+
+| Product | Board | BIOS | Issue | Probe entry | Status | Last update |
+| ------- | ----- | ---- | ----- | ----------- | ------ | ----------- |
+
+---
+
 ## Capability-based support
 
 Starting with the multi-model refactor, the driver exposes a **capabilities** sysfs file:
@@ -23,7 +33,35 @@ This means:
 
 - Adding a model = adding a quirk table entry in the kernel, not rewriting userspace
 - The same package works across models with different feature sets
-- Unsupported features are gracefully hidden, not broken
+- Unsupported features are gracefully hidden, not broken (optional subsystems degrade at init; module load succeeds)
+
+### Quirk invariants (code-enforced)
+
+Every quirk entry is validated at module load (`nitro_validate_quirks()`). The invariants are:
+
+- `capabilities` uses only defined bits
+- `rgb_zones` [0, 4]; if `CAP_RGB` then `rgb_zones > 0`
+- `dynamic_effects` [0, 5]; if `CAP_RGB_DYNAMIC` then `dynamic_effects > 0`
+- `fan_count` [0, 2]; if `CAP_FAN` then `fan_count > 0`
+- `CAP_FAN_MODE` requires `CAP_FAN`
+- `CAP_LED_CLASS` requires `CAP_RGB`
+- `CAP_RGB_DYNAMIC` requires `CAP_RGB`
+- `CAP_PLATFORM_PROFILE` requires `profile_backend == FTBL`
+- `CAP_COOLBOOST` requires `CAP_FAN_MODE` and `coolboost_backend == EC10`
+- Backends are `NONE` or the single supported type (`FTBL` / `EC10`)
+
+A probe quirk (used with `probe=1`) is validated separately. It may advertise
+read-only capabilities (`CAP_FAN`, `CAP_FAN_MODE`, `CAP_HWMON`, `CAP_RGB`,
+`CAP_RGB_DYNAMIC`) so the probe can read sensors, fan state, and lighting, but
+it must use `NONE` backends and must not set `CAP_COOLBOOST`,
+`CAP_PLATFORM_PROFILE`, or `CAP_LED_CLASS`: those are unverified write paths,
+and probe mode does not register LED class or platform profile devices.
+
+---
+
+### Fan duty 0 note
+
+On AN515-57, duty 0 does **not** stop the fans; firmware maps it to ~2k–3k RPM. Duties 1–19 are real low duties (RPM increases with duty). The driver logs duty 0 at info level and warns for 1–19; both messages are rate-limited.
 
 ---
 
@@ -50,7 +88,7 @@ Also include:
 - What you observe: fans, temperatures, backlight, profile, suspend behavior
 - **Safety acknowledgement:** you have not force-loaded or written raw registers
 
-`nitro report` automates this. It is read-only and redacts UUIDs, MACs, and serials.
+`nitro report` automates this. It is read-only and redacts UUIDs, MAC addresses, and long digit-only strings; review the output before posting.
 
 ---
 

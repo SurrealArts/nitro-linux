@@ -1,3 +1,4 @@
+#!/bin/bash
 _install_config() {
   if [ ! -e /etc/nitro.conf ]; then
     install -Dm644 /usr/share/nitro-linux/nitro.conf /etc/nitro.conf
@@ -59,9 +60,9 @@ _ensure_nitro_group() {
 }
 
 _tighten_state() {
-  install -d -m755 -o root -g root /var/lib/nitro
-  chmod 755 /var/lib/nitro 2>/dev/null || true
-  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db 2>/dev/null || true
+  install -d -m700 -o root -g root /var/lib/nitro
+  chmod 700 /var/lib/nitro 2>/dev/null || true
+  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db* 2>/dev/null || true
   rm -f /var/lib/nitro/state.json.tmp 2>/dev/null || true
 }
 

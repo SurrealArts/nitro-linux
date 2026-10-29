@@ -1,5 +1,5 @@
 [Unit]
-Description=Apply /etc/nitro.conf (Acer Nitro AN515-57 keyboard/fan)
+Description=Apply /etc/nitro.conf (Acer Nitro)
 After=systemd-modules-load.service
 ConditionPathExists=/sys/devices/platform/nitro
 
@@ -7,6 +7,16 @@ ConditionPathExists=/sys/devices/platform/nitro
 Type=oneshot
 ExecStart=/usr/local/bin/nitro-apply
 RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

@@ -2,10 +2,6 @@
 
 Kernel driver, daemon, and btop-style TUI for Acer Nitro laptops: keyboard backlight effects, fan monitoring, thermal policies. On verified models it coexists with in-tree `acer-wmi`; other models may be supported through the probe interface. See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
 
-**Verified:** AN515-57 / Scala_TLS, BIOS V1.22
-
-Verified: AN515-57 / Scala_TLS, BIOS V1.22. Other models may be supported via the probe interface (`probe=1`). See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
-
 Minimum terminal size: **120x47**
 
 ![nitro-linux dashboard](docs/screenshot-tui.png)
@@ -56,26 +52,26 @@ sudo bash deploy/uninstall.sh
 
 ### TUI keys
 
-| Area      | Keys                | Action                                                      |
-| --------- | ------------------- | ----------------------------------------------------------- |
-| Fans      | `A` `S` `D`         | Auto, Max, Custom                                           |
-| Fans      | `.` `/`             | CPU duty -/+ 5%                                             |
-| Fans      | `;` `'`             | GPU duty -/+ 5%                                             |
-| CoolBoost | `i`                 | Toggle in Auto; disabled in Max/Custom                      |
-| Power     | `Z` `X` `C` `V` `B` | Power Saver, Quiet, Balance, Balance Acer, High-Performance |
-| Power     | `o` `p`             | AC / Battery tab                                            |
-| Thermal   | `F`                 | Switch °C / °F                                              |
-| Keyboard  | `[` `]`             | Static / dynamic mode                                       |
-| Keyboard  | `1`-`4`             | Select a static zone                                        |
-| Keyboard  | `x`                 | Toggle the selected static zone                             |
-| Keyboard  | `1`-`5`             | Dynamic effect: breath, neon, wave, shifting, zoom          |
-| Keyboard  | `t` `T`             | Dynamic speed -/+                                           |
-| Keyboard  | `f`                 | Dynamic direction (wave, shifting)                          |
-| Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                   |
-| Keyboard  | `l` `L`             | Brightness -/+                                              |
-| Session   | `R`                 | Reapply saved state                                         |
-| Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                    |
-| Session   | `q` `Q`             | Quit / stop daemon                                          |
+| Area      | Keys                | Action                                                                     |
+| --------- | ------------------- | -------------------------------------------------------------------------- |
+| Fans      | `A` `S` `D`         | Auto, Max, Custom                                                          |
+| Fans      | `.` `/`             | CPU duty -/+ 5%                                                            |
+| Fans      | `;` `'`             | GPU duty -/+ 5%                                                            |
+| CoolBoost | `i`                 | Toggle in Auto; disabled in Max/Custom                                     |
+| Power     | `Z` `X` `C` `V` `B` | Power Saver, Quiet, Balance, Balance Acer, High-Performance                |
+| Power     | `o` `p`             | AC / Battery tab                                                           |
+| Thermal   | `F`                 | Switch °C / °F                                                             |
+| Keyboard  | `[` `]`             | Static / dynamic mode                                                      |
+| Keyboard  | `1`-`4`             | Select a static zone                                                       |
+| Keyboard  | `x`                 | Toggle the selected static zone                                            |
+| Keyboard  | `1`-`5`             | Dynamic effect: breath, neon, wave, shifting, zoom                         |
+| Keyboard  | `t` `T`             | Dynamic speed -/+                                                          |
+| Keyboard  | `f`                 | Dynamic direction (wave, shifting)                                         |
+| Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                                  |
+| Keyboard  | `l` `L`             | Brightness -/+                                                             |
+| Session   | `R`                 | Reapply saved state                                                        |
+| Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                                   |
+| Session   | `q` `Q`             | Quit UI (daemon continues running; stop with `sudo systemctl stop nitrod`) |
 
 ### CLI
 
@@ -116,7 +112,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 #### Configuration and state
 
-- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while both fans are Auto.
+- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
 - `/etc/modules-load.d/nitro.conf`: loads the `nitro` kernel module at boot; removed on uninstall.
 - `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, and the `profile_ac`/`profile_battery` keys; kept on uninstall.
 - `/var/lib/nitro/history.db`: 24-hour fan, temperature, and duty history written by `nitrod`; kept on uninstall.
@@ -143,7 +139,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 - `nitro` kernel module: `/usr/lib/modules/<kernel>/updates/dkms/nitro.ko.zst`; DKMS source `/usr/src/nitro-<version>/`, build state `/var/lib/dkms/nitro/<version>/`.
 - `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
-- `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the four keyboard zones.
+- `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the keyboard zones (up to four).
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`) and `coretemp` package temperature when present.
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
 - `/sys/class/power_supply/*/online`: AC/battery state that selects `profile_ac` or `profile_battery`.
@@ -174,7 +170,7 @@ sudo openssl req -new -x509 -newkey rsa:2048 \
 
 ## Dependencies
 
-Package: `python`, `dkms`, `systemd`
+Package: `python`, `dkms`, `systemd`, `acl` (for per-user socket access)
 
 - optional: `nvidia-utils`
 
@@ -182,7 +178,7 @@ Source build: `linux-headers`, `dkms`, `make`, `gcc`, `sudo`
 
 - secure boot: `mokutil` + `openssl`
 
-Runtime: Python 3.8+, `nvidia-smi` for GPU sensors
+Runtime: Python 3.9+ (tested on 3.9 and 3.13), `nvidia-smi` for GPU sensors
 
 ## Notes
 

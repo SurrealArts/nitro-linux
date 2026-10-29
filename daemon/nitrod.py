@@ -6,7 +6,7 @@ nitrod - daemon
 State persists in /var/lib/nitro/state.json,
 history in /var/lib/nitro/history.db (24h).
 
-State layout (0.8.0)
+State layout:
     mode            "static" | "dynamic"          active keyboard display
     static          {"1": {"rgb": [r,g,b], "on": bool}, ...}
                     zones on EC keys 1,2,4,8; on/off is independent of the
@@ -20,11 +20,13 @@ State layout (0.8.0)
     profile_ac      platform profile applied while on mains power
     profile_battery platform profile applied while on battery
 """
+import fcntl
 import grp
 import json
 import os
 import pwd
 import shutil
+import signal
 import socket
 import subprocess
 import sqlite3
@@ -32,6 +34,9 @@ import sys
 import threading
 import time
 from glob import glob
+
+MAX_CLIENTS = 32
+client_slots = threading.Semaphore(MAX_CLIENTS)
 
 for _model_path in (
     "/usr/local/lib/nitro",
@@ -57,9 +62,8 @@ from model import (
     CAP_LED_CLASS,
 )
 
-UID = os.getuid()
-RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{UID}")
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
+LOCK = SOCK + ".lock"
 SOCK_GROUP = os.environ.get("NITRO_SOCK_GROUP", "nitro")
 SYS = os.environ.get("NITRO_SYS", "/sys/devices/platform/nitro")
 VERSION = "2.3.1"
@@ -123,17 +127,7 @@ def coerce_bool(value):
 
 
 def parse_coolboost(value):
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int) and value in (0, 1):
-        return bool(value)
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v in ("1", "on"):
-            return True
-        if v in ("0", "off"):
-            return False
-    return None
+    return coerce_bool(value)
 
 
 def hwmon_find(name):
@@ -199,18 +193,46 @@ def snapshot():
     if c:
         t = read(f"{c}/temp1_input")
         d["package_c"] = (int(t) / 1000.0) if t and t.lstrip("-").isdigit() else None
-    try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
-            text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
-        t = out.splitlines()[0].strip() if out else ""
-        d["gpu_c"] = float(t) if t.replace(".", "", 1).isdigit() else None
-    except Exception:
-        d["gpu_c"] = None
+    gpu_temp = None
+    nv_hwmon = hwmon_find("nvidia") or hwmon_find("nouveau")
+    if nv_hwmon:
+        t = read(f"{nv_hwmon}/temp1_input")
+        if t and t.lstrip("-").isdigit():
+            gpu_temp = int(t) / 1000.0
+    if gpu_temp is None:
+        try:
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+                text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
+            t = out.splitlines()[0].strip() if out else ""
+            gpu_temp = float(t) if t.replace(".", "", 1).isdigit() else None
+        except Exception:
+            gpu_temp = None
+    d["gpu_c"] = gpu_temp
     has_fan_data = has_fan and d.get("fan_cpu_duty") is not None
     has_hwmon_data = has_hwmon and n
     d["driver"] = "ok" if has_fan_data or has_hwmon_data else "missing"
     return d
+
+
+_cached_snapshot = None
+_cached_snapshot_lock = threading.Lock()
+_cached_snapshot_ts = 0.0
+
+
+def get_snapshot(max_age=POLL):
+    global _cached_snapshot, _cached_snapshot_ts
+    now = time.time()
+    with _cached_snapshot_lock:
+        if _cached_snapshot is not None and (now - _cached_snapshot_ts) < max_age:
+            return dict(_cached_snapshot)
+    snap = snapshot()
+    ts = time.time()
+    snap["ts"] = ts
+    with _cached_snapshot_lock:
+        _cached_snapshot = snap
+        _cached_snapshot_ts = ts
+        return dict(snap)
 
 
 def default_state():
@@ -531,8 +553,11 @@ def db():
         ts INTEGER PRIMARY KEY, package_c REAL, ec_c REAL, gpu_c REAL,
         cpu_rpm REAL, gpu_rpm REAL, cpu_duty REAL, gpu_duty REAL)""")
     try:
-        con.execute("ALTER TABLE samples ADD COLUMN gpu_c REAL")
-        con.commit()
+        cur = con.execute("PRAGMA table_info(samples)")
+        cols = [row[1] for row in cur.fetchall()]
+        if "gpu_c" not in cols:
+            con.execute("ALTER TABLE samples ADD COLUMN gpu_c REAL")
+            con.commit()
     except sqlite3.Error:
         pass
     return con
@@ -541,9 +566,15 @@ def db():
 def cmd_status(_):
     with state_lock:
         s = json.loads(json.dumps(state))
-    snap = snapshot()
-    return {"ok": True, "data": snap, "desired": s, "source": ac_source(),
-            "daemon": {"uptime_s": int(time.time() - start_ts)}}
+    snap = get_snapshot(max_age=POLL)
+    return {
+        "ok": True,
+        "data": snap,
+        "desired": s,
+        "source": ac_source(),
+        "ts": snap.get("ts", time.time()),
+        "daemon": {"uptime_s": int(time.time() - start_ts)},
+    }
 
 
 def cmd_history(arg):
@@ -650,7 +681,9 @@ def cmd_set(arg):
             if not QUIRKS.has_cap(CAP_RGB):
                 return {"ok": False, "err": "RGB not supported on this model"}
             z = chk_zone(arg["zone"])
-            on = bool(arg["on"])
+            on = coerce_bool(arg.get("on"))
+            if on is None:
+                return {"ok": False, "err": "on must be a boolean"}
             zz = state["static"][str(z)]
             if on and zz["rgb"] == [0, 0, 0]:
                 zz["rgb"] = [255, 255, 255]
@@ -740,6 +773,18 @@ def handle(line):
     return {"ok": False, "err": "unknown command"}
 
 
+def acquire_lock():
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise SystemExit("another nitrod instance is already running")
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    return fd
+
+
 def _nitro_group():
     try:
         return grp.getgrnam(SOCK_GROUP)
@@ -784,15 +829,33 @@ def serve():
         os.unlink(SOCK)
     except OSError:
         pass
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(SOCK)
+    old_umask = os.umask(0o077)
+    try:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(SOCK)
+    finally:
+        os.umask(old_umask)
     _secure_sock()
     server.listen(5)
+    server.settimeout(1.0)
     print(f"nitrod listening on {SOCK}")
     while not stop_event.is_set():
         try:
             client, _ = server.accept()
-            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+            if not client_slots.acquire(blocking=False):
+                pr_err("too many clients; rejecting connection")
+                client.close()
+                continue
+            try:
+                threading.Thread(
+                    target=handle_client, args=(client,), daemon=True
+                ).start()
+            except RuntimeError as e:
+                pr_err(f"client thread failed: {e}")
+                client_slots.release()
+                client.close()
+        except socket.timeout:
+            continue
         except OSError:
             if stop_event.is_set():
                 break
@@ -806,70 +869,80 @@ def serve():
 
 def main():
     global state
+    os.umask(0o077)
+    signal.signal(signal.SIGTERM, lambda s, f: stop_event.set())
+    signal.signal(signal.SIGINT, lambda s, f: stop_event.set())
+    lock_fd = acquire_lock()
     con = db()
     try:
-        con.execute("DELETE FROM samples WHERE ts < ?",
-                    (int(time.time()) - RETENTION,))
-        con.commit()
-    except sqlite3.Error:
-        pass
-    if not QUIRKS.probe:
-        for _ in range(30):
-            if snapshot()["driver"] == "ok":
-                break
-            time.sleep(1)
-    state = load_state()
-    if state is None:
-        state = default_state()
-        if not adopt_current(state):
+        try:
+            con.execute("DELETE FROM samples WHERE ts < ?",
+                        (int(time.time()) - RETENTION,))
+            con.commit()
+        except sqlite3.Error:
+            pass
+        if not QUIRKS.probe:
+            for _ in range(30):
+                if get_snapshot(max_age=0)["driver"] == "ok":
+                    break
+                time.sleep(1)
+        state = load_state()
+        if state is None:
+            state = default_state()
+            if not adopt_current(state):
+                apply_all(state)
+        else:
             apply_all(state)
-    else:
-        apply_all(state)
-    save_state(state)
+        save_state(state)
 
-    threading.Thread(target=serve, daemon=True).start()
-    last_prune = time.time()
-    last_src = ac_source()
-    while not stop_event.is_set():
-        src = ac_source()
-        if src and last_src and src != last_src:
-            with state_lock:
-                apply_changed_profile(state)
-            last_src = src
-        s = snapshot()
-        if s["driver"] == "ok":
-            try:
-                con.execute(
-                    "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?)",
-                    (
-                        int(time.time()),
-                        s.get("package_c"),
-                        s.get("ec_c"),
-                        s.get("gpu_c"),
-                        float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
-                        float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
-                        float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
-                        float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None)
-                    )
-                con.commit()
-            except (sqlite3.Error, ValueError, TypeError):
-                pass
-        if time.time() - last_prune > 3600:
-            try:
-                con.execute("DELETE FROM samples WHERE ts < ?",
-                            (int(time.time()) - RETENTION,))
-                con.commit()
-            except sqlite3.Error:
-                pass
-            last_prune = time.time()
-        stop_event.wait(POLL)
-    con.close()
+        server_thread = threading.Thread(target=serve, daemon=True)
+        server_thread.start()
+        last_prune = time.time()
+        last_src = ac_source()
+        while not stop_event.is_set():
+            src = ac_source()
+            if src and last_src and src != last_src:
+                with state_lock:
+                    apply_changed_profile(state)
+                last_src = src
+            s = get_snapshot(max_age=0)
+            if s["driver"] == "ok":
+                try:
+                    con.execute(
+                        "INSERT OR REPLACE INTO samples VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            int(s.get("ts", time.time())),
+                            s.get("package_c"),
+                            s.get("ec_c"),
+                            s.get("gpu_c"),
+                            float(s["cpu_rpm"]) if s.get("cpu_rpm") else None,
+                            float(s["gpu_rpm"]) if s.get("gpu_rpm") else None,
+                            float(s["fan_cpu_duty"]) if s.get("fan_cpu_duty") else None,
+                            float(s["fan_gpu_duty"]) if s.get("fan_gpu_duty") else None)
+                        )
+                    con.commit()
+                except (sqlite3.Error, ValueError, TypeError):
+                    pass
+            if time.time() - last_prune > 3600:
+                try:
+                    con.execute("DELETE FROM samples WHERE ts < ?",
+                                (int(time.time()) - RETENTION,))
+                    con.commit()
+                except sqlite3.Error:
+                    pass
+                last_prune = time.time()
+            stop_event.wait(POLL)
+        server_thread.join(timeout=2.0)
+    finally:
+        con.close()
+        os.close(lock_fd)
 
 
 MAX_PAYLOAD = 65536
 
 def handle_client(client):
     try:
+        client.settimeout(5.0)
         data = b""
         while not data.endswith(b"\n"):
             if len(data) > MAX_PAYLOAD:
@@ -887,6 +960,7 @@ def handle_client(client):
         pass
     finally:
         client.close()
+        client_slots.release()
 
 
 def project_version():
@@ -894,6 +968,8 @@ def project_version():
     for p in (
         os.path.join(here, "VERSION"),
         os.path.join(here, os.pardir, "VERSION"),
+        "/usr/lib/nitro/VERSION",
+        "/usr/local/lib/nitro/VERSION",
     ):
         try:
             with open(p) as f:
