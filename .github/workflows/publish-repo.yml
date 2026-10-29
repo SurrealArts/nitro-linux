@@ -3,7 +3,7 @@ name: Publish pacman repository
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   # Manual runs are only useful to re-publish an existing tag: select the tag
   # in the "Use workflow from" dropdown. Branch runs are skipped by the job
   # guard below.
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    # Only tag refs may publish. This also blocks workflow_dispatch from a
+    # Only semver tag refs may publish. This also blocks workflow_dispatch from a
     # branch, which would otherwise build unreviewed code with the signing key.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -40,6 +40,9 @@ jobs:
           GNUPGHOME="$(mktemp -d)"
           export GNUPGHOME
           trap 'rm -rf "$GNUPGHOME"' EXIT
+          # actions/checkout overwrites the tag ref with the commit; re-fetch the
+          # tag object from origin so git verify-tag can inspect the signature.
+          git fetch --force origin "refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}"
           shopt -s nullglob
           keys=(keys/*.asc)
           if [ "${#keys[@]}" -eq 0 ]; then
