@@ -55,4 +55,4 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (hex or decimal, e.g. `0x11` or `17`). In probe mode, write methods are rejected.
+- `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected.
