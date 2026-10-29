@@ -51,6 +51,17 @@ is_uint() {
   return 0
 }
 
+zone_supported() {
+  # Static zones are EC bit ids (1, 2, 4, 8), truncated to the zone count.
+  local z="$1" n="$2" id=1 i
+  [ "$n" -ge 1 ] || return 1
+  for ((i = 0; i < n && i < 4; i++)); do
+    [ "$z" = "$id" ] && return 0
+    id=$((id * 2))
+  done
+  return 1
+}
+
 find_profile() {
   local pp owner
   for pp in /sys/class/platform-profile/platform-profile-*; do
@@ -75,8 +86,8 @@ while read -r kind a b c d e f g; do
       if [ "$HAS_RGB" = 1 ]; then
         if ! is_uint "$a"; then
           echo "nitro-apply: static zone '$a' is not a number" >&2
-        elif [ "$a" -lt 1 ] || [ "$a" -gt "${RGB_ZONES:-0}" ]; then
-          echo "nitro-apply: static zone $a skipped (only ${RGB_ZONES:-0} zones)" >&2
+        elif ! zone_supported "$a" "${RGB_ZONES:-0}"; then
+          echo "nitro-apply: static zone $a skipped (model exposes ${RGB_ZONES:-0} zone(s))" >&2
         else
           echo "$a $b $c $d" > "$BASE/kbd_static" 2>/dev/null || echo "nitro-apply: static $a $b $c $d failed" >&2
         fi
