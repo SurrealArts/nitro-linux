@@ -43,6 +43,14 @@ if [ "$IS_PROBE" = 1 ]; then
   exit 0
 fi
 
+is_uint() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+    0?*) return 1 ;;
+  esac
+  return 0
+}
+
 find_profile() {
   local pp owner
   for pp in /sys/class/platform-profile/platform-profile-*; do
@@ -65,8 +73,10 @@ while read -r kind a b c d e f g; do
     ""|"#"*) continue ;;
     static)
       if [ "$HAS_RGB" = 1 ]; then
-        if [ "${RGB_ZONES:-0}" = 1 ] && [ "$a" != 1 ]; then
-          echo "nitro-apply: static zone $a skipped (single zone)" >&2
+        if ! is_uint "$a"; then
+          echo "nitro-apply: static zone '$a' is not a number" >&2
+        elif [ "$a" -lt 1 ] || [ "$a" -gt "${RGB_ZONES:-0}" ]; then
+          echo "nitro-apply: static zone $a skipped (only ${RGB_ZONES:-0} zones)" >&2
         else
           echo "$a $b $c $d" > "$BASE/kbd_static" 2>/dev/null || echo "nitro-apply: static $a $b $c $d failed" >&2
         fi
@@ -75,7 +85,9 @@ while read -r kind a b c d e f g; do
       fi ;;
     dyn)
       if [ "$HAS_DYN" = 1 ]; then
-        if [ "${DYN_EFFECTS:-0}" -ge 1 ] && [ "$a" -gt "${DYN_EFFECTS:-0}" ]; then
+        if ! is_uint "$a"; then
+          echo "nitro-apply: dyn mode '$a' is not a number" >&2
+        elif [ "${DYN_EFFECTS:-0}" -ge 1 ] && [ "$a" -gt "${DYN_EFFECTS:-0}" ]; then
           echo "nitro-apply: dyn mode $a skipped (only $DYN_EFFECTS effects)" >&2
         else
           echo "$a $b $c $d $e $f $g" > "$BASE/kbd_dynamic" 2>/dev/null || echo "nitro-apply: dyn failed" >&2
@@ -85,7 +97,11 @@ while read -r kind a b c d e f g; do
       fi ;;
     fan)
       if [ "$HAS_FAN" = 1 ]; then
-        if [ "$a" = "gpu" ] && [ "${FAN_COUNT:-0}" -lt 2 ]; then
+        if [ "$a" != "cpu" ] && [ "$a" != "gpu" ]; then
+          echo "nitro-apply: fan expects cpu or gpu, got '$a'" >&2
+        elif ! is_uint "$b" || [ "$b" -gt 100 ]; then
+          echo "nitro-apply: fan $a duty '$b' must be 0-100" >&2
+        elif [ "$a" = "gpu" ] && [ "${FAN_COUNT:-0}" -lt 2 ]; then
           echo "nitro-apply: fan gpu skipped (single fan)" >&2
         else
           echo "$b" > "$BASE/fan_$a" 2>/dev/null || echo "nitro-apply: fan $a $b failed" >&2

@@ -47,9 +47,9 @@ ensure_nitro_group() {
 }
 
 tighten_state() {
-  install -d -m755 -o root -g root /var/lib/nitro
-  chmod 755 /var/lib/nitro 2>/dev/null || true
-  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db 2>/dev/null || true
+  install -d -m700 -o root -g root /var/lib/nitro
+  chmod 700 /var/lib/nitro 2>/dev/null || true
+  chmod 600 /var/lib/nitro/state.json /var/lib/nitro/history.db* 2>/dev/null || true
   rm -f /var/lib/nitro/state.json.tmp 2>/dev/null || true
 }
 
@@ -138,6 +138,10 @@ preflight_sb() {
 }
 preflight_sb
 VER=$(grep PACKAGE_VERSION dkms.conf | cut -d'"' -f2)
+if ! [[ $VER =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "[!] invalid version '$VER' in dkms.conf (expected X.Y.Z)" >&2
+  exit 1
+fi
 SRC=/usr/src/nitro-$VER
 echo "[*] version $VER"
 echo "[*] copy source to $SRC"

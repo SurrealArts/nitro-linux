@@ -35,6 +35,9 @@ import threading
 import time
 from glob import glob
 
+MAX_CLIENTS = 32
+client_slots = threading.Semaphore(MAX_CLIENTS)
+
 for _model_path in (
     "/usr/local/lib/nitro",
     "/usr/lib/nitro",
@@ -839,7 +842,18 @@ def serve():
     while not stop_event.is_set():
         try:
             client, _ = server.accept()
-            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+            if not client_slots.acquire(blocking=False):
+                pr_err("too many clients; rejecting connection")
+                client.close()
+                continue
+            try:
+                threading.Thread(
+                    target=handle_client, args=(client,), daemon=True
+                ).start()
+            except RuntimeError as e:
+                pr_err(f"client thread failed: {e}")
+                client_slots.release()
+                client.close()
         except socket.timeout:
             continue
         except OSError:
@@ -855,6 +869,7 @@ def serve():
 
 def main():
     global state
+    os.umask(0o077)
     signal.signal(signal.SIGTERM, lambda s, f: stop_event.set())
     signal.signal(signal.SIGINT, lambda s, f: stop_event.set())
     lock_fd = acquire_lock()
@@ -945,6 +960,7 @@ def handle_client(client):
         pass
     finally:
         client.close()
+        client_slots.release()
 
 
 def project_version():

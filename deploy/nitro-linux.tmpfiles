@@ -1,1 +1,1 @@
-d /var/lib/nitro 0755 root root -
+d /var/lib/nitro 0700 root root -
