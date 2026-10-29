@@ -5,7 +5,7 @@
 Fingerprint:
 
 ```text
-7EA2338784E083123CC077F2E29A80B4FDD576B1
+C260B0176C622E63CA781D975D8990EE71D2A96C
 ```
 
 Keyserver: `hkps://keyserver.ubuntu.com` (full fingerprint required)
