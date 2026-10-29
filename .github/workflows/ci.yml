@@ -136,4 +136,7 @@ jobs:
           persist-credentials: false
 
       - name: Build module
-        run: make KERNELDIR="$(ls -d /usr/lib/modules/*/build | head -n1)" W=1
+        run: |
+          shopt -s nullglob
+          dirs=(/usr/lib/modules/*/build)
+          make KERNELDIR="${dirs[0]}" W=1

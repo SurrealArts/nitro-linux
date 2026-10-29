@@ -37,7 +37,8 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          export GNUPGHOME="$(mktemp -d)"
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
           trap 'rm -rf "$GNUPGHOME"' EXIT
           shopt -s nullglob
           keys=(keys/*.asc)
