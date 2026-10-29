@@ -1,6 +1,6 @@
 pkgbase = nitro-linux
 	pkgdesc = Acer Nitro kernel driver, daemon, and TUI
-	pkgver = 2.3.2
+	pkgver = 2.3.3
 	pkgrel = 1
 	url = https://github.com/SurrealArts/nitro-linux
 	install = nitro-linux.install
@@ -14,7 +14,7 @@ pkgbase = nitro-linux
 	optdepends = linux-headers: build the module for the default kernel
 	optdepends = linux-lts-headers: build the module for the LTS kernel
 	optdepends = nvidia-utils: GPU temperature and model name in the thermal pane
-	source = nitro-linux::git+https://github.com/SurrealArts/nitro-linux.git#tag=v2.3.2
+	source = nitro-linux::git+https://github.com/SurrealArts/nitro-linux.git#tag=v2.3.3
 	sha256sums = SKIP
 
 pkgname = nitro-linux

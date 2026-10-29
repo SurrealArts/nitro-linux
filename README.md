@@ -23,8 +23,8 @@ Server = https://surrealarts.github.io/nitro-linux/$arch
 ```
 
 ```bash
-sudo pacman-key --keyserver hkps://keyserver.ubuntu.com --recv-keys 7EA2338784E083123CC077F2E29A80B4FDD576B1
-sudo pacman-key --lsign-key 7EA2338784E083123CC077F2E29A80B4FDD576B1
+sudo pacman-key --keyserver hkps://keyserver.ubuntu.com --recv-keys C260B0176C622E63CA781D975D8990EE71D2A96C
+sudo pacman-key --lsign-key C260B0176C622E63CA781D975D8990EE71D2A96C
 ```
 
 Install the headers for your running kernel (`linux-headers` or `linux-lts-headers`), then:

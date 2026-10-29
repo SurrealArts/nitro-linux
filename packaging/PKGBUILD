@@ -1,6 +1,6 @@
 # Maintainer: SurrealArts <heiwamakina@gmail.com>
 pkgname=nitro-linux
-pkgver=2.3.2
+pkgver=2.3.3
 pkgrel=1
 pkgdesc='Acer Nitro kernel driver, daemon, and TUI'
 arch=('x86_64')
