@@ -1861,23 +1861,26 @@ def main(stdscr):
 
 def runloop(ui):
     last = 0.0
+    last_append = 0.0
     last_sample_ts = None
     last_error_ts = None
     while True:
         now = time.time()
         if now - last >= ui.refresh_ms / 1000.0:
             try:
-                ui.snap = rpc({"cmd": "status"})
+                ui.snap = rpc({"cmd": "status", "max_age": 0})
                 sample_ts = (ui.snap.get("data") or {}).get("ts") or ui.snap.get("ts")
                 if sample_ts is None:
                     sample_ts = int(now)
                 if sample_ts != last_sample_ts:
                     last_sample_ts = sample_ts
                     last_error_ts = None
-                    data = ui.snap.get("data") or {}
-                    ui.series.append({
-                        k: num(data.get(k)) for k in
-                        ("cpu_rpm", "gpu_rpm", "package_c", "gpu_c")})
+                    if now - last_append >= ui.refresh_ms / 1000.0 * 0.75:
+                        last_append = now
+                        data = ui.snap.get("data") or {}
+                        ui.series.append({
+                            k: num(data.get(k)) for k in
+                            ("cpu_rpm", "gpu_rpm", "package_c", "gpu_c")})
                 if ui.msg and not ui.msg.startswith("!!") and now - ui.msg_time > 5:
                     ui.msg = ""
             except OSError as e:
@@ -1886,6 +1889,7 @@ def runloop(ui):
                 err_ts = int(now)
                 if err_ts != last_error_ts:
                     last_error_ts = err_ts
+                    last_append = now
                     ui.series.append(
                         {"cpu_rpm": None, "gpu_rpm": None,
                         "package_c": None, "gpu_c": None})

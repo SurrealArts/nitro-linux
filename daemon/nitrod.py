@@ -148,6 +148,33 @@ def ac_source():
     return None
 
 
+_gpu_temp_lock = threading.Lock()
+_gpu_temp_ts = 0.0
+_gpu_temp_val = None
+GPU_TEMP_TTL = 2.0
+
+
+def nvidia_temp():
+    global _gpu_temp_ts, _gpu_temp_val
+    now = time.time()
+    with _gpu_temp_lock:
+        if now - _gpu_temp_ts < GPU_TEMP_TTL:
+            return _gpu_temp_val
+    val = None
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
+        t = out.splitlines()[0].strip() if out else ""
+        val = float(t) if t.replace(".", "", 1).isdigit() else None
+    except Exception:
+        val = None
+    with _gpu_temp_lock:
+        _gpu_temp_ts = time.time()
+        _gpu_temp_val = val
+    return val
+
+
 def snapshot():
     d = {}
     has_fan = QUIRKS.has_cap(CAP_FAN)
@@ -200,14 +227,7 @@ def snapshot():
         if t and t.lstrip("-").isdigit():
             gpu_temp = int(t) / 1000.0
     if gpu_temp is None:
-        try:
-            out = subprocess.check_output(
-                ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
-                text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
-            t = out.splitlines()[0].strip() if out else ""
-            gpu_temp = float(t) if t.replace(".", "", 1).isdigit() else None
-        except Exception:
-            gpu_temp = None
+        gpu_temp = nvidia_temp()
     d["gpu_c"] = gpu_temp
     has_fan_data = has_fan and d.get("fan_cpu_duty") is not None
     has_hwmon_data = has_hwmon and n
@@ -563,10 +583,15 @@ def db():
     return con
 
 
-def cmd_status(_):
+def cmd_status(arg):
+    try:
+        max_age = float((arg or {}).get("max_age", POLL))
+    except (TypeError, ValueError):
+        max_age = POLL
+    max_age = max(0.0, min(POLL, max_age))
     with state_lock:
         s = json.loads(json.dumps(state))
-    snap = get_snapshot(max_age=POLL)
+    snap = get_snapshot(max_age=max_age)
     return {
         "ok": True,
         "data": snap,
@@ -748,7 +773,7 @@ def cmd_set(arg):
         else:
             return {"ok": False, "err": "unknown key"}
         save_state(state)
-    return cmd_status(None)
+    return cmd_status({"max_age": 0})
 
 
 def handle(line):
@@ -767,7 +792,7 @@ def handle(line):
         if cmd == "reapply":
             with state_lock:
                 apply_all(state)
-            return cmd_status(None)
+            return cmd_status({"max_age": 0})
     except Exception as e:
         return {"ok": False, "err": str(e)}
     return {"ok": False, "err": "unknown command"}
