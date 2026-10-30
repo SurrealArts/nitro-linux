@@ -32,7 +32,7 @@ import syslog
 import time
 from collections import deque
 
-VERSION = "2.3.3"
+VERSION = "2.3.4"
 
 
 def project_version():
