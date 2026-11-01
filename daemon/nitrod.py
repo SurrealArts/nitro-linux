@@ -301,15 +301,29 @@ def migrate(raw):
         raw["profile_ac"] = raw["profile_battery"] = raw["profile"]
     st = raw.get("static")
     if isinstance(st, dict):
+        merged = {}
         for z in ZONES:
-            v = st.get(str(z))
+            key = str(z)
+            base = s["static"].get(key) or {"rgb": [255, 255, 255], "on": True}
+            rgb = list(base["rgb"])
+            on = bool(base["on"])
+            v = st.get(key)
             if isinstance(v, list) and len(v) == 3:
-                rgb = [int(x) for x in v]
-                st[str(z)] = {"rgb": rgb, "on": any(rgb)}
+                try:
+                    rgb = [max(0, min(255, int(x))) for x in v]
+                except (TypeError, ValueError):
+                    pass
+                on = any(rgb)
             elif isinstance(v, dict):
-                rgb = [int(x) for x in v.get("rgb", [0, 0, 0])]
-                st[str(z)] = {"rgb": rgb, "on": bool(v.get("on", any(rgb)))}
-        s["static"] = st
+                if isinstance(v.get("rgb"), list) and len(v["rgb"]) == 3:
+                    try:
+                        rgb = [max(0, min(255, int(x))) for x in v["rgb"]]
+                    except (TypeError, ValueError):
+                        pass
+                parsed = coerce_bool(v.get("on"))
+                on = any(rgb) if parsed is None else parsed
+            merged[key] = {"rgb": rgb, "on": on}
+        s["static"] = merged
     dy = raw.get("dynamic")
     if isinstance(dy, dict) and s["dynamic"].get("effects"):
         if isinstance(dy.get("effects"), dict):
@@ -354,9 +368,7 @@ def migrate(raw):
     else:
         s["coolboost"] = None
     if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
-        kt = coerce_bool(raw.get("kbd_timeout"))
-        if kt is not None:
-            s["kbd_timeout"] = kt
+        s["kbd_timeout"] = coerce_bool(raw.get("kbd_timeout"))
     else:
         s["kbd_timeout"] = None
     if s.get("mode") not in ("static", "dynamic"):
@@ -520,11 +532,11 @@ def apply_kbd_timeout(s):
         return True
     if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
         return True
+    if s.get("kbd_timeout") is None:
+        return True
     path = f"{SYS}/kbd_timeout"
     if not os.path.exists(path):
         return False
-    if s.get("kbd_timeout") is None:
-        return True
     write(path, 1 if s.get("kbd_timeout") else 0)
     return True
 
@@ -539,8 +551,8 @@ def apply_kbd(s):
     else:
         write(f"{SYS}/kbd_bright", s["brightness"])
         for z in ZONES:
-            zz = s["static"][str(z)]
-            r, g, b = zz["rgb"] if zz["on"] else (0, 0, 0)
+            zz = s["static"].get(str(z)) or {"rgb": [0, 0, 0], "on": False}
+            r, g, b = zz.get("rgb", [0, 0, 0]) if zz.get("on") else (0, 0, 0)
             write(f"{SYS}/kbd_static", f"{z} {r} {g} {b}")
 
 
@@ -740,9 +752,10 @@ def cmd_set(arg):
                 return {"ok": False, "err": "RGB not supported on this model"}
             z = chk_zone(arg["zone"])
             r, g, b = chk_rgb(arg["r"]), chk_rgb(arg["g"]), chk_rgb(arg["b"])
-            zz = state["static"][str(z)]
+            zz = state["static"].setdefault(
+                str(z), {"rgb": [255, 255, 255], "on": True})
             zz["rgb"] = [r, g, b]
-            if zz["on"]:
+            if zz.get("on", True):
                 write(f"{SYS}/kbd_static", f"{z} {r} {g} {b}")
                 state["mode"] = "static"
         elif key == "static_on":
@@ -752,7 +765,8 @@ def cmd_set(arg):
             on = coerce_bool(arg.get("on"))
             if on is None:
                 return {"ok": False, "err": "on must be a boolean"}
-            zz = state["static"][str(z)]
+            zz = state["static"].setdefault(
+                str(z), {"rgb": [255, 255, 255], "on": True})
             if on and zz["rgb"] == [0, 0, 0]:
                 zz["rgb"] = [255, 255, 255]
             zz["on"] = on
@@ -823,6 +837,8 @@ def handle(line):
     try:
         msg = json.loads(line)
     except ValueError:
+        return {"ok": False, "err": "bad json"}
+    if not isinstance(msg, dict):
         return {"ok": False, "err": "bad json"}
     cmd = msg.get("cmd")
     try:

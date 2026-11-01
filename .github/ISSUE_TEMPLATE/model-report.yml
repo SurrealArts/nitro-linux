@@ -99,13 +99,13 @@ body:
     id: safety-ack
     attributes:
       label: "Safety Acknowledgement"
-      description: "You must confirm you have not done any of the following"
+      description: "A local DMI patch is not upstream support, but it is useful context: disclose it under Observed Behavior instead of hiding it. Do not force-load or write raw EC/WMI registers."
       options:
-        - label: "I have not force-loaded the module"
-          required: true
-        - label: "I have not patched DMI strings"
+        - label: "I have not force-loaded the module with modprobe -f or insmod"
           required: true
         - label: "I have not written raw EC/WMI registers"
+          required: true
+        - label: "I understand that a local DMI or source patch is not upstream support, and I have disclosed any such patch under Observed Behavior"
           required: true
         - label: "I understand my model is unverified and probe mode is read-only"
           required: true

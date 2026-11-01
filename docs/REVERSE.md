@@ -51,7 +51,7 @@ EC cross-check (AN515-57, `ec_read()`): the setting is backed by EC `0x06`, whic
 
 - Driver: `kbd_timeout` RW sysfs, accepts `0`/`1`/`on`/`off`; SET is verified by a follow-up GET.
 - Gated by `NITRO_CAP_KBD_TIMEOUT`. If the APGE GUID is missing the capability is dropped at load and the module still probes.
-- The probe-time value is saved and restored on module unload.
+- The value read at module load is saved and restored on module unload; probe mode reads it without saving.
 
 ### CoolBoost (direct EC)
 
@@ -63,9 +63,9 @@ CoolBoost is not a WMI command on this machine. It is direct EC register
 - Reads always work. Writes are allowed only while both fans report `auto`;
   in `max`/`custom` the driver returns `-EPERM` and leaves the EC value
   retained. This matches NitroSense, where the toggle is greyed outside Auto.
-- The probe-time value is saved and restored on module unload.
-- Evidence: `windows-captures/coolboost/FINDINGS.md` (ignored). Auto idle effect
-  at matched temperatures: +418 CPU RPM / +451 GPU RPM on Windows at 92 °C.
+- The value read at module load is saved and restored on module unload. Probe entries never expose CoolBoost.
+- Evidence: captured Windows EC traces (not stored in this repository). Auto
+  idle effect at matched temperatures: +418 CPU RPM / +451 GPU RPM on Windows at 92 °C.
   Linux spot check at 62 °C CPU / 53 °C GPU: about 2040/2307 RPM off and
   2255/2521 RPM on, i.e. roughly +215/+215; the direction matches.
 
@@ -85,4 +85,4 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected.
+- `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected, but the selector bytes are not validated: `0x05` and `0x17` can have firmware side effects and some `0x17` selectors are refused by the typed attributes. Treat `wmi_raw` as a root-only engineering escape hatch, not a guaranteed read-only path.

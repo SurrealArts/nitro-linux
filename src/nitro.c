@@ -2501,6 +2501,13 @@ static int __init nitro_init(void)
 			pr_warn("keyboard timeout read failed; disabling\n");
 			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
 		}
+	} else if (nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT)) {
+		u8 timeout_on;
+
+		if (!nitro_get_kbd_timeout(&timeout_on))
+			nitro->cur_kbd_timeout = timeout_on;
+		else
+			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
 	}
 	nitro_log_state(nitro);
 	mutex_unlock(&nitro->lock);

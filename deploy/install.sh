@@ -168,13 +168,27 @@ if ! [[ $VER =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 echo "[*] version $VER"
+if [ "$MANUAL_MODULE" -eq 1 ]; then
+  MODULE_VER=$(modinfo -F version nitro 2>/dev/null || true)
+  if [ -z "$MODULE_VER" ]; then
+    echo "[!] no nitro module found for $(uname -r) in the module tree" >&2
+    echo "    build and install the module for the running kernel first." >&2
+    exit 1
+  fi
+  if [ "$MODULE_VER" != "$VER" ]; then
+    echo "[!] installed nitro module is $MODULE_VER, expected $VER" >&2
+    echo "    build/install the matching module before using --manual-module." >&2
+    exit 1
+  fi
+  echo "[*] manual module mode: Secure Boot signing is your responsibility"
+fi
 if [ "$MANUAL_MODULE" -eq 0 ]; then
   SRC=/usr/src/nitro-$VER
   echo "[*] copy source to $SRC"
   rm -rf "$SRC"
   mkdir -p "$SRC"
   cp -a Makefile dkms.conf VERSION src tools docs deploy README.md "$SRC/"
-  rm -rf "$SRC/src/"*.o "$SRC/src/"*.ko "$SRC/src/".*.cmd "$SRC/.tmp_versions" "$SRC/Module.symvers" "$SRC/modules.order" 2>/dev/null || true
+  rm -rf "$SRC/src/"*.o "$SRC/src/"*.ko "$SRC/src/"*.mod "$SRC/src/"*.mod.c "$SRC/src/".*.cmd "$SRC/.tmp_versions" "$SRC/Module.symvers" "$SRC/modules.order" 2>/dev/null || true
   echo "[*] dkms add/build/install"
   for v in $(dkms status 2>/dev/null | sed -n 's#^nitro/\([^,]*\),.*#\1#p' | sort -u); do
     dkms remove -m nitro -v "$v" --all 2>/dev/null || true
@@ -211,7 +225,6 @@ install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 tighten_state
 add_user_nitro
 systemctl daemon-reload
-systemctl enable nitro-apply.service nitrod.service
 systemctl stop nitrod.service 2>/dev/null || true
 echo "[*] load"
 rmmod nitro 2>/dev/null || true
@@ -222,16 +235,34 @@ if [ "$MANUAL_MODULE" -eq 1 ]; then
   echo "[*] manual module mode: loading $(uname -r) module via modprobe"
 fi
 modprobe nitro || { dmesg | tail -5; echo "[!] modprobe failed. If Secure Boot is on, the signing key must be enrolled (see Secure Boot below)."; exit 1; }
-LOADED_VER=$(modinfo -F version nitro 2>/dev/null || true)
-if [ -n "$LOADED_VER" ] && [ "$LOADED_VER" != "$VER" ]; then
+LOADED_VER=$(cat /sys/module/nitro/version 2>/dev/null || true)
+if [ -z "$LOADED_VER" ]; then
+  LOADED_VER=$(modinfo -F version nitro 2>/dev/null || true)
+fi
+if [ -z "$LOADED_VER" ]; then
+  echo "[!] cannot read the loaded nitro version; expected $VER"
+  echo "    check 'lsmod | grep nitro' and 'modinfo nitro'."
+  exit 1
+fi
+if [ "$LOADED_VER" != "$VER" ]; then
   echo "[!] loaded nitro is $LOADED_VER, expected $VER"
   echo "    modprobe picked up a stale copy; install your module for $(uname -r) and retry."
   exit 1
 fi
 sleep 1
-echo "[*] apply /etc/nitro.conf"
+echo "[*] enable and start services"
+systemctl enable nitro-apply.service nitrod.service
 systemctl restart nitro-apply.service 2>/dev/null || true
 systemctl restart nitrod.service 2>/dev/null || true
+if [ -d /run/systemd/system ]; then
+  sleep 1
+  if ! systemctl is-active --quiet nitrod.service; then
+    echo "[!] nitrod.service failed to start" >&2
+    systemctl --no-pager --full status nitrod.service 2>/dev/null | tail -20 || true
+    echo "    inspect: journalctl -u nitrod.service" >&2
+    exit 1
+  fi
+fi
 if [ "$MANUAL_MODULE" -eq 0 ]; then
   echo "[*] rebuild initramfs (bake current nitro, purge stale copies)"
   if command -v dracut-rebuild >/dev/null 2>&1; then

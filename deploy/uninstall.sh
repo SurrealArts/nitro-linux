@@ -53,11 +53,26 @@ disable_key() {
   fi
 }
 
+pkg_owns() {
+  local f="$1"
+  if command -v pacman >/dev/null 2>&1 && pacman -Qo "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v rpm >/dev/null 2>&1 && rpm -qf "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v dpkg >/dev/null 2>&1 && dpkg -S "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
 echo "[*] disable services"
 systemctl disable --now nitrod.service 2>/dev/null || true
 systemctl disable --now nitro-apply.service 2>/dev/null || true
 echo "[*] rmmod"
 rmmod nitro 2>/dev/null || true
+rm -f /run/nitro.sock /run/nitro.sock.lock
 echo "[*] remove source files"
 disable_key
 rm -f /etc/systemd/system/nitro-apply.service /etc/systemd/system/nitrod.service
@@ -74,17 +89,18 @@ for v in $(dkms status 2>/dev/null | sed -n 's#^nitro/\([^,]*\),.*#\1#p' | sort 
   echo "[*] dkms remove nitro/$v"
   dkms remove -m nitro -v "$v" --all 2>/dev/null || true
 done
-for d in /usr/src/nitro-[0-9]*; do
+for d in /usr/src/nitro-*; do
   [ -d "$d" ] || continue
+  [[ ${d##*/} =~ ^nitro-[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
   echo "[*] remove $d"
   rm -rf "$d"
 done
 echo "[*] remove module files not managed by dkms"
 for k in /lib/modules/*; do
   [ -d "$k" ] || continue
-  for f in "$k"/updates/dkms/nitro.ko* "$k"/updates/nitro.ko* "$k"/extra/nitro.ko* "$k"/kernel/drivers/platform/x86/nitro.ko*; do
+  for f in "$k"/updates/dkms/nitro.ko* "$k"/updates/nitro.ko* "$k"/extra/nitro.ko*; do
     [ -e "$f" ] || continue
-    if command -v pacman >/dev/null 2>&1 && pacman -Qo "$f" >/dev/null 2>&1; then
+    if pkg_owns "$f"; then
       echo "[!] $f is owned by a package; leaving it"
       continue
     fi

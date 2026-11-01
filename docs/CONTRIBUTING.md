@@ -35,10 +35,10 @@ Open a **Model support report** issue and paste the output. Also include:
 
 A candidate probe entry is added only after a Model Support Report is triaged, and it keeps the full `sys_vendor` + `product_name` + `board_name` triad. Current probe table:
 
-| Product        | Board     | BIOS  | Probe reads                             |
-| -------------- | --------- | ----- | --------------------------------------- |
-| Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, hwmon, 4x static RGB |
-| Nitro AN515-45 | Scala_CAS | V1.14 | 2x fans, fan mode, hwmon, 4x static RGB |
+| Product        | Board     | BIOS  | Probe reads                                   |
+| -------------- | --------- | ----- | --------------------------------------------- |
+| Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
+| Nitro AN515-45 | Scala_CAS | V1.14 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
 
 If your model is in the table, load the module in read-only mode:
 
@@ -50,8 +50,9 @@ nitro report
 ```
 
 Probe mode exposes read-only attributes for the capabilities the probe entry
-advertises, does not register hwmon, LEDs, or platform profile, and limits
-`wmi_raw` to read methods. Do not use `modprobe -f`, `insmod`, or patched DMI
+advertises, does not register a hwmon class, LEDs, or platform profile, and
+limits `wmi_raw` to read methods. `CAP_HWMON` still gates the `ec_cpu_temp`
+attribute and the thermal pane in the TUI. Do not use `modprobe -f`, `insmod`, or patched DMI
 strings.
 
 ---
@@ -60,10 +61,10 @@ strings.
 
 1. Your report goes into the Candidates table in `docs/MODELS.md`
 2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
-3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost, one at a time
+3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout, one at a time
 4. With recorded evidence, the model gets a quirk entry and moves to **Verified**
 
-CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on, `0x80000` off).
+CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off).
 
 ---
 

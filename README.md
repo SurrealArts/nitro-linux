@@ -46,7 +46,7 @@ sudo bash deploy/install.sh
 sudo bash deploy/uninstall.sh
 ```
 
-If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. It refuses to continue if the module `modprobe` picks up reports a different version. **Only do this when you know what you are doing!**
+If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. Before changing the userspace tree it checks the installed module's version against this checkout and aborts on a mismatch; after loading it checks `/sys/module/nitro/version` again. **Only do this when you know what you are doing!**
 
 ## Use
 
@@ -78,16 +78,16 @@ If you build and sign the kernel module yourself, deploy only the userspace tool
 
 ### CLI
 
-| Command                                                              | Purpose                                                        |
-| -------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `nitro` or `nitro status`                                            | Show fan, temperature, lighting, CoolBoost, and profile status |
-| `sudo nitro rgb <zone> <r> <g> <b>`                                  | Set a static LED zone; zone is 1, 2, 4, or 8                   |
-| `sudo nitro fan <cpu-or-gpu> <0-100>`                                | Set fan duty                                                   |
-| `sudo nitro coolboost <on-or-off>`                                   | Toggle CoolBoost; fans must be Auto                            |
-| `sudo nitro kbd-timeout [on-or-off]`                                 | Show or set the 30-second keyboard backlight timeout           |
-| `sudo nitro dyn <mode> <speed> <brightness> <direction> <r> <g> <b>` | Set dynamic lighting                                           |
-| `sudo nitro profile <profile>`                                       | Set the platform profile                                       |
-| `nitro key <command>`                                                | Bind or manage the NitroSense key                              |
+| Command                                                              | Purpose                                                                 |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `nitro` or `nitro status`                                            | Show fan, temperature, lighting, CoolBoost, timeout, and profile status |
+| `sudo nitro rgb <zone> <r> <g> <b>`                                  | Set a static LED zone; zone is 1, 2, 4, or 8                            |
+| `sudo nitro fan <cpu-or-gpu> <0-100>`                                | Set fan duty                                                            |
+| `sudo nitro coolboost <on-or-off>`                                   | Toggle CoolBoost; fans must be Auto                                     |
+| `sudo nitro kbd-timeout [on-or-off]`                                 | Show or set the 30-second keyboard backlight timeout                    |
+| `sudo nitro dyn <mode> <speed> <brightness> <direction> <r> <g> <b>` | Set dynamic lighting                                                    |
+| `sudo nitro profile <profile>`                                       | Set the platform profile                                                |
+| `nitro key <command>`                                                | Bind or manage the NitroSense key                                       |
 
 Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Speed is `0`-`255`, brightness is `0`-`100`, and direction is `1` or `2`. Profiles are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`. Writes go to root-owned sysfs, hence `sudo`.
 
@@ -116,9 +116,9 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 #### Configuration and state
 
-- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
+- `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, keyboard timeout, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
 - `/etc/modules-load.d/nitro.conf`: loads the `nitro` kernel module at boot; removed on uninstall.
-- `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, and the `profile_ac`/`profile_battery` keys; kept on uninstall.
+- `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, the keyboard timeout, and the `profile_ac`/`profile_battery` keys; kept on uninstall. Missing lighting zones are backfilled during load, so a partial or older state file does not leave the keyboard dark. An older state file with no keyboard-timeout key leaves the firmware value unchanged until you toggle it.
 - `/var/lib/nitro/history.db`: 24-hour fan, temperature, and duty history written by `nitrod`; kept on uninstall.
 - `~/.config/nitro/tui.json`: TUI refresh interval and °C/°F preference; kept on uninstall.
 - `~/.config/nitro/key.json`: captured Nitro key and bound command; fixed at `~/.config` so the installer, CLI, and user service agree; kept across installs and uninstalls.
