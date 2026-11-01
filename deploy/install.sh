@@ -2,6 +2,27 @@
 set -e
 cd "$(dirname "$0")/.."
 
+MANUAL_MODULE=0
+
+usage() {
+  cat <<'EOF'
+usage: sudo bash deploy/install.sh [--manual-module]
+
+  --manual-module   skip DKMS; install the userspace tools and services only.
+                    Use this when you built and signed the kernel module yourself.
+  -h, --help        show this help
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --manual-module) MANUAL_MODULE=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "[!] unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
 if pacman -Qq nitro-linux >/dev/null 2>&1; then
   echo "[!] nitro-linux is installed as a package."
   echo "    Use pacman to upgrade, or remove the package before a source install."
@@ -136,29 +157,39 @@ preflight_sb() {
   echo "Reboot, confirm enrollment in MokManager, then re-run this script."
   return 1
 }
-preflight_sb
-VER=$(grep PACKAGE_VERSION dkms.conf | cut -d'"' -f2)
+if [ "$MANUAL_MODULE" -eq 0 ]; then
+  preflight_sb
+  VER=$(grep PACKAGE_VERSION dkms.conf | cut -d'"' -f2)
+else
+  VER=$(tr -d '[:space:]' < VERSION)
+fi
 if ! [[ $VER =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "[!] invalid version '$VER' in dkms.conf (expected X.Y.Z)" >&2
+  echo "[!] invalid version '$VER' (expected X.Y.Z)" >&2
   exit 1
 fi
-SRC=/usr/src/nitro-$VER
 echo "[*] version $VER"
-echo "[*] copy source to $SRC"
-rm -rf "$SRC"
-mkdir -p "$SRC"
-cp -a Makefile dkms.conf VERSION src tools docs deploy README.md "$SRC/"
-rm -rf "$SRC/src/"*.o "$SRC/src/"*.ko "$SRC/src/".*.cmd "$SRC/.tmp_versions" "$SRC/Module.symvers" "$SRC/modules.order" 2>/dev/null || true
-echo "[*] dkms add/build/install"
-dkms remove -m nitro -v "$VER" --all 2>/dev/null || true
-dkms add -m nitro -v "$VER"
-for k in /lib/modules/*; do
-  [ -d "$k/build" ] || continue
-  k="${k##*/}"
-  echo "[*] build/install for $k"
-  dkms build -m nitro -v "$VER" -k "$k"
-  dkms install -m nitro -v "$VER" -k "$k"
-done
+if [ "$MANUAL_MODULE" -eq 0 ]; then
+  SRC=/usr/src/nitro-$VER
+  echo "[*] copy source to $SRC"
+  rm -rf "$SRC"
+  mkdir -p "$SRC"
+  cp -a Makefile dkms.conf VERSION src tools docs deploy README.md "$SRC/"
+  rm -rf "$SRC/src/"*.o "$SRC/src/"*.ko "$SRC/src/".*.cmd "$SRC/.tmp_versions" "$SRC/Module.symvers" "$SRC/modules.order" 2>/dev/null || true
+  echo "[*] dkms add/build/install"
+  for v in $(dkms status 2>/dev/null | sed -n 's#^nitro/\([^,]*\),.*#\1#p' | sort -u); do
+    dkms remove -m nitro -v "$v" --all 2>/dev/null || true
+  done
+  dkms add -m nitro -v "$VER"
+  for k in /lib/modules/*; do
+    [ -d "$k/build" ] || continue
+    k="${k##*/}"
+    echo "[*] build/install for $k"
+    dkms build -m nitro -v "$VER" -k "$k"
+    dkms install -m nitro -v "$VER" -k "$k"
+  done
+else
+  echo "[*] manual module mode: skipping DKMS build and install"
+fi
 echo "[*] modules-load + config + service"
 install -m644 deploy/nitro-modules.conf /etc/modules-load.d/nitro.conf
 install -m755 deploy/nitro-apply /usr/local/bin/nitro-apply
@@ -185,17 +216,31 @@ systemctl stop nitrod.service 2>/dev/null || true
 echo "[*] load"
 rmmod nitro 2>/dev/null || true
 sleep 1
-modprobe led-class-multicolor
-modprobe nitro || { dmesg | tail -5; echo "[!] modprobe failed. If Secure Boot is on, the DKMS key must be enrolled (see Secure Boot below)."; exit 1; }
+modprobe led-class-multicolor 2>/dev/null || true
+if [ "$MANUAL_MODULE" -eq 1 ]; then
+  depmod -a "$(uname -r)" 2>/dev/null || true
+  echo "[*] manual module mode: loading $(uname -r) module via modprobe"
+fi
+modprobe nitro || { dmesg | tail -5; echo "[!] modprobe failed. If Secure Boot is on, the signing key must be enrolled (see Secure Boot below)."; exit 1; }
+LOADED_VER=$(modinfo -F version nitro 2>/dev/null || true)
+if [ -n "$LOADED_VER" ] && [ "$LOADED_VER" != "$VER" ]; then
+  echo "[!] loaded nitro is $LOADED_VER, expected $VER"
+  echo "    modprobe picked up a stale copy; install your module for $(uname -r) and retry."
+  exit 1
+fi
 sleep 1
 echo "[*] apply /etc/nitro.conf"
 systemctl restart nitro-apply.service 2>/dev/null || true
 systemctl restart nitrod.service 2>/dev/null || true
-echo "[*] rebuild initramfs (bake current nitro, purge stale copies)"
-if command -v dracut-rebuild >/dev/null 2>&1; then
-  dracut-rebuild
+if [ "$MANUAL_MODULE" -eq 0 ]; then
+  echo "[*] rebuild initramfs (bake current nitro, purge stale copies)"
+  if command -v dracut-rebuild >/dev/null 2>&1; then
+    dracut-rebuild
+  else
+    echo "[!] dracut-rebuild not found: rebuild your initramfs manually"
+  fi
 else
-  echo "[!] dracut-rebuild not found: rebuild your initramfs manually"
+  echo "[*] manual module mode: skipping initramfs rebuild"
 fi
 echo "[*] status"
 dkms status | grep nitro || true

@@ -2,7 +2,7 @@
 
 Kernel driver, daemon, and btop-style TUI for Acer Nitro laptops: keyboard backlight effects, fan monitoring, thermal policies. On verified models it coexists with in-tree `acer-wmi`; other models may be supported through the probe interface. See [Models](docs/MODELS.md) and [Contributing](docs/CONTRIBUTING.md).
 
-Minimum terminal size: **120x47**
+Minimum terminal size: **120x45**
 
 ![nitro-linux dashboard](docs/screenshot-tui.png)
 
@@ -46,6 +46,8 @@ sudo bash deploy/install.sh
 sudo bash deploy/uninstall.sh
 ```
 
+If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. It refuses to continue if the module `modprobe` picks up reports a different version. **Only do this when you know what you are doing!**
+
 ## Use
 
 `nitro-linux` opens the TUI. `nitro help` lists CLI commands, and `?` shows the in-app key map.
@@ -69,6 +71,7 @@ sudo bash deploy/uninstall.sh
 | Keyboard  | `f`                 | Dynamic direction (wave, shifting)                                         |
 | Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                                  |
 | Keyboard  | `l` `L`             | Brightness -/+                                                             |
+| Keyboard  | `k`                 | 30-second keyboard backlight timeout on/off                                |
 | Session   | `R`                 | Reapply saved state                                                        |
 | Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                                   |
 | Session   | `q` `Q`             | Quit UI (daemon continues running; stop with `sudo systemctl stop nitrod`) |
@@ -81,6 +84,7 @@ sudo bash deploy/uninstall.sh
 | `sudo nitro rgb <zone> <r> <g> <b>`                                  | Set a static LED zone; zone is 1, 2, 4, or 8                   |
 | `sudo nitro fan <cpu-or-gpu> <0-100>`                                | Set fan duty                                                   |
 | `sudo nitro coolboost <on-or-off>`                                   | Toggle CoolBoost; fans must be Auto                            |
+| `sudo nitro kbd-timeout [on-or-off]`                                 | Show or set the 30-second keyboard backlight timeout           |
 | `sudo nitro dyn <mode> <speed> <brightness> <direction> <r> <g> <b>` | Set dynamic lighting                                           |
 | `sudo nitro profile <profile>`                                       | Set the platform profile                                       |
 | `nitro key <command>`                                                | Bind or manage the NitroSense key                              |
@@ -138,7 +142,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 #### Kernel, sensors, LEDs, and profiles
 
 - `nitro` kernel module: `/usr/lib/modules/<kernel>/updates/dkms/nitro.ko.zst`; DKMS source `/usr/src/nitro-<version>/`, build state `/var/lib/dkms/nitro/<version>/`.
-- `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
+- `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_timeout`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
 - `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the keyboard zones (up to four).
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`) and `coretemp` package temperature when present.
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
@@ -183,7 +187,7 @@ Runtime: Python 3.9+ (tested on 3.9 and 3.13), `nvidia-smi` for GPU sensors
 ## Notes
 
 - EC via WMI GUID `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56` (`WMBH`); see [REVERSE](docs/REVERSE.md).
-- Unload restores the previous fan/policy/lighting state.
+- Unload restores the previous fan/policy/lighting/timeout state.
 - Kernel logs: `journalctl -k | grep nitro` or `sudo dmesg | grep nitro`.
 
 ## License

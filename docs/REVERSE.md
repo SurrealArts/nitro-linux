@@ -23,6 +23,36 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
+### Keyboard backlight timeout (WMI APGE)
+
+The 30-second timeout is not on the gaming GUID. It uses the APGE interface: GUID `61EF69EA-865C-4BC3-A502-A0DEBA0CB531`, ACPI object id `AA` -> method `WMAA` in SSDT12. Method `1` is SET and `2` is GET; both take an 8-byte little-endian payload that `WMAA` forwards to firmware through `WSMI`.
+
+| Action  | Payload                            | Reply                                  |
+| ------- | ---------------------------------- | -------------------------------------- |
+| get     | `0x00088401`                       | `0x1E0000080000` = on, `0x80000` = off |
+| set off | `0x00088402`                       | `0x0` = accepted                       |
+| set on  | `0x1E0000088402` (`0x1E` = 30-sec) | `0x0` = accepted                       |
+
+The GET reply mirrors the last SET payload: bits 40-47 are the timeout in seconds (`0x1E` = 30), and firmware sets bit 19 (`0x80000`) once a SET has run in that boot. SET itself returns `0x0`, so the driver confirms by GET.
+
+Verified on AN515-57 (module reload + `/sys/.../kbd_timeout`):
+
+| State                           | GET reply                                 | `kbd_timeout` |
+| ------------------------------- | ----------------------------------------- | ------------- |
+| set on                          | `0x1E0000080000`                          | 1             |
+| set off                         | `0x0000000000080000`                      | 0             |
+| before the first SET after boot | `0x1E0000000000` (duration, bit 19 clear) | 1             |
+
+WMI APGE GUID: `61EF69EA-865C-4BC3-A502-A0DEBA0CB531`
+
+The boot-time value is read as **on**, since the 30-sec duration is what the firmware stores for an armed timeout; `0x80000` alone is off. A GET reply of `0x0` or one with unexpected bits is treated as `-EPROTO` and drops the capability at load.
+
+EC cross-check (AN515-57, `ec_read()`): the setting is backed by EC `0x06`, which reads `0x1E` while the timeout is on and `0x00` while it is off.
+
+- Driver: `kbd_timeout` RW sysfs, accepts `0`/`1`/`on`/`off`; SET is verified by a follow-up GET.
+- Gated by `NITRO_CAP_KBD_TIMEOUT`. If the APGE GUID is missing the capability is dropped at load and the module still probes.
+- The probe-time value is saved and restored on module unload.
+
 ### CoolBoost (direct EC)
 
 CoolBoost is not a WMI command on this machine. It is direct EC register

@@ -17,6 +17,7 @@ RGB_ZONES=0
 HAS_DYN=0
 DYN_EFFECTS=0
 HAS_COOLBOOST=0
+HAS_KBD_TIMEOUT=0
 IS_PROBE=0
 if [ -f "$CAP_FILE" ]; then
   while read -ra caps; do
@@ -30,6 +31,7 @@ if [ -f "$CAP_FILE" ]; then
         rgb=*) HAS_RGB=1; RGB_ZONES=${cap#rgb=} ;;
         dyn=*) HAS_DYN=1; DYN_EFFECTS=${cap#dyn=} ;;
         coolboost=*) HAS_COOLBOOST=1 ;;
+        kbd_timeout=*) HAS_KBD_TIMEOUT=1 ;;
       esac
     done
   done < "$CAP_FILE"
@@ -148,6 +150,17 @@ while read -r kind a b c d e f g; do
         echo "$a" > "$PROFILE_PATH" 2>/dev/null || echo "nitro-apply: profile $a failed" >&2
       else
         echo "nitro-apply: profile skipped (platform profile not supported)" >&2
+      fi ;;
+    kbd_timeout)
+      if [ "$HAS_KBD_TIMEOUT" = 1 ]; then
+        case "$a" in
+          on|1) kt=1 ;;
+          off|0) kt=0 ;;
+          *) echo "nitro-apply: kbd_timeout expects on|off, got '$a'" >&2; continue ;;
+        esac
+        echo "$kt" > "$BASE/kbd_timeout" 2>/dev/null || echo "nitro-apply: kbd_timeout $a failed" >&2
+      else
+        echo "nitro-apply: kbd_timeout skipped (not supported)" >&2
       fi ;;
     *) echo "nitro-apply: unknown line: $kind $a $b $c $d $e $f $g" >&2 ;;
   esac

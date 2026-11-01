@@ -60,6 +60,7 @@ from model import (
     CAP_RGB_DYNAMIC,
     CAP_COOLBOOST,
     CAP_LED_CLASS,
+    CAP_KBD_TIMEOUT,
 )
 
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
@@ -193,6 +194,8 @@ def snapshot():
         d["fan_mode"] = read(f"{SYS}/fan_mode")
     if has_cool:
         d["coolboost"] = read(f"{SYS}/coolboost")
+    if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        d["kbd_timeout"] = read(f"{SYS}/kbd_timeout")
     if has_profile:
         d["ftbl"] = read(f"{SYS}/ftbl")
         d["profile"] = read(PP) if PP else None
@@ -260,6 +263,7 @@ def default_state():
     has_dyn = QUIRKS.has_cap(CAP_RGB_DYNAMIC)
     has_cool = QUIRKS.has_cap(CAP_COOLBOOST)
     has_profile = QUIRKS.has_cap(CAP_PLATFORM_PROFILE)
+    has_kbd_timeout = QUIRKS.has_cap(CAP_KBD_TIMEOUT)
 
     static = {}
     if has_rgb:
@@ -285,6 +289,7 @@ def default_state():
         "fan_gpu": 50,
         "fan_mode": {"cpu": "custom", "gpu": "custom"},
         "coolboost": False if has_cool else None,
+        "kbd_timeout": False if has_kbd_timeout else None,
         "profile_ac": "balanced" if has_profile else None,
         "profile_battery": "low-power" if has_profile else None,
     }
@@ -348,6 +353,12 @@ def migrate(raw):
             s["coolboost"] = cb
     else:
         s["coolboost"] = None
+    if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        kt = coerce_bool(raw.get("kbd_timeout"))
+        if kt is not None:
+            s["kbd_timeout"] = kt
+    else:
+        s["kbd_timeout"] = None
     if s.get("mode") not in ("static", "dynamic"):
         s["mode"] = "static"
     if QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
@@ -431,6 +442,10 @@ def adopt_current(s):
         cb = coerce_bool(snap.get("coolboost"))
         if cb is not None:
             s["coolboost"] = cb
+    if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        kt = coerce_bool(snap.get("kbd_timeout"))
+        if kt is not None:
+            s["kbd_timeout"] = kt
     if QUIRKS.has_cap(CAP_RGB):
         try:
             s["brightness"] = int(snap["kbd_bright"])
@@ -500,6 +515,20 @@ def apply_coolboost(s):
     return True
 
 
+def apply_kbd_timeout(s):
+    if QUIRKS.probe:
+        return True
+    if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        return True
+    path = f"{SYS}/kbd_timeout"
+    if not os.path.exists(path):
+        return False
+    if s.get("kbd_timeout") is None:
+        return True
+    write(path, 1 if s.get("kbd_timeout") else 0)
+    return True
+
+
 def apply_kbd(s):
     if QUIRKS.probe:
         return True
@@ -541,6 +570,12 @@ def apply_all(s):
         except (OSError, KeyError, ValueError) as e:
             results.append(("coolboost", False))
             pr_err(f"apply_coolboost failed: {e}")
+    if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        try:
+            results.append(("kbd_timeout", apply_kbd_timeout(s)))
+        except (OSError, KeyError, ValueError) as e:
+            results.append(("kbd_timeout", False))
+            pr_err(f"apply_kbd_timeout failed: {e}")
     if QUIRKS.has_cap(CAP_RGB):
         try:
             apply_kbd(s)
@@ -684,6 +719,14 @@ def cmd_set(arg):
                 return {"ok": False, "err": "coolboost on|off"}
             write(f"{SYS}/coolboost", 1 if on else 0)
             state["coolboost"] = on
+        elif key == "kbd_timeout":
+            if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+                return {"ok": False, "err": "keyboard timeout not supported on this model"}
+            on = coerce_bool(arg.get("value"))
+            if on is None:
+                return {"ok": False, "err": "kbd_timeout on|off"}
+            write(f"{SYS}/kbd_timeout", 1 if on else 0)
+            state["kbd_timeout"] = on
         elif key in ("brightness", "kbd_bright"):
             if not QUIRKS.has_cap(CAP_RGB):
                 return {"ok": False, "err": "RGB not supported on this model"}

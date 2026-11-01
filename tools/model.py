@@ -14,6 +14,7 @@ CAP_RGB = 1 << 4
 CAP_RGB_DYNAMIC = 1 << 5
 CAP_COOLBOOST = 1 << 6
 CAP_LED_CLASS = 1 << 7
+CAP_KBD_TIMEOUT = 1 << 8
 
 PROFILE_NONE = 0
 PROFILE_FTBL = 1
@@ -55,6 +56,8 @@ class NitroQuirks:
             caps["coolboost"] = "ec10"
         if self.has_cap(CAP_LED_CLASS):
             caps["led"] = 1
+        if self.has_cap(CAP_KBD_TIMEOUT):
+            caps["kbd_timeout"] = 1
         return caps
 
     def capabilities_string(self) -> str:
@@ -112,6 +115,7 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
     dyn = int(caps.get("dyn", 0))
     coolboost = caps.get("coolboost")
     led = caps.get("led") == "1"
+    kbd_timeout = caps.get("kbd_timeout") == "1"
 
     if profile not in (None, "ftbl"):
         return UNKNOWN_QUIRKS
@@ -137,6 +141,8 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
         capabilities |= CAP_COOLBOOST
     if led:
         capabilities |= CAP_LED_CLASS
+    if kbd_timeout:
+        capabilities |= CAP_KBD_TIMEOUT
 
     try:
         fan_count = int(caps.get("fan_count", 1 if fan else 0))
@@ -225,6 +231,7 @@ def main():
     print(f"Has hwmon: {q.has_cap(CAP_HWMON)}")
     print(f"Has platform_profile: {q.has_cap(CAP_PLATFORM_PROFILE)}")
     print(f"Has led_class: {q.has_cap(CAP_LED_CLASS)}")
+    print(f"Has kbd_timeout: {q.has_cap(CAP_KBD_TIMEOUT)}")
     print(f"Zones: {ZONES}")
     print(f"Effects: {EFFECTS}")
 

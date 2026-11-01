@@ -34,72 +34,86 @@ MODULE_AUTHOR("SurrealArts");
 MODULE_DESCRIPTION("Acer Nitro WMI driver (fan, RGB, hwmon, platform_profile)");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(NITRO_VERSION);
+MODULE_SOFTDEP("pre: led-class-multicolor");
 
-#define NITRO_WMI_GUID "7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
+#define NITRO_WMI_GUID				"7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
+#define NITRO_APGE_GUID				"61EF69EA-865C-4BC3-A502-A0DEBA0CB531"
 #define NITRO_EC_COOLBOOST 0x10
 
-#define NITRO_BH_SET_LED		0x02
-#define NITRO_BH_SYSINFO		0x05
-#define NITRO_BH_SET_STATIC		0x06
-#define NITRO_BH_GET_STATIC		0x07
-#define NITRO_BH_SET_FAN_BEHAVIOR	0x0E
-#define NITRO_BH_GET_FAN_BEHAVIOR	0x0F
-#define NITRO_BH_SET_FAN		0x10
-#define NITRO_BH_GET_FAN		0x11
-#define NITRO_BH_SET_FTBL		0x12
-#define NITRO_BH_GET_FTBL		0x13
-#define NITRO_BH_SET_DYN		0x14
-#define NITRO_BH_GET_DYN		0x15
-#define NITRO_BH_SET_MISC		0x16
-#define NITRO_BH_GET_MISC		0x17
+#define NITRO_APGE_SET				0x01
+#define NITRO_APGE_GET				0x02
+#define NITRO_APGE_KBD_TIMEOUT_QUERY		0x0000000000088401ULL
+#define NITRO_APGE_KBD_TIMEOUT_OFF		0x0000000000088402ULL
+#define NITRO_APGE_KBD_TIMEOUT_ON		0x001E0000088402ULL
+#define NITRO_APGE_KBD_TIMEOUT_ON_REPLY		0x001E0000080000ULL
+#define NITRO_APGE_KBD_TIMEOUT_OFF_REPLY	0x0000000000080000ULL
+#define NITRO_APGE_KBD_TIMEOUT_ON_UNSET		0x001E0000000000ULL
+#define NITRO_APGE_KBD_TIMEOUT_DURATION_MASK	0x00FF0000000000ULL
+#define NITRO_APGE_KBD_TIMEOUT_VALID		0x0000000000080000ULL
 
-#define NITRO_FAN_CPU			0x01
-#define NITRO_FAN_GPU			0x04
+#define NITRO_BH_SET_LED			0x02
+#define NITRO_BH_SYSINFO			0x05
+#define NITRO_BH_SET_STATIC			0x06
+#define NITRO_BH_GET_STATIC			0x07
+#define NITRO_BH_SET_FAN_BEHAVIOR		0x0E
+#define NITRO_BH_GET_FAN_BEHAVIOR		0x0F
+#define NITRO_BH_SET_FAN			0x10
+#define NITRO_BH_GET_FAN			0x11
+#define NITRO_BH_SET_FTBL			0x12
+#define NITRO_BH_GET_FTBL			0x13
+#define NITRO_BH_SET_DYN			0x14
+#define NITRO_BH_GET_DYN			0x15
+#define NITRO_BH_SET_MISC			0x16
+#define NITRO_BH_GET_MISC			0x17
 
-#define NITRO_FANBIT_CPU		0x01
-#define NITRO_FANBIT_GPU		0x08
-#define NITRO_FANBIT_BOTH		0x09
+#define NITRO_FAN_CPU				0x01
+#define NITRO_FAN_GPU				0x04
 
-#define NITRO_CAP_FAN			BIT(0)
-#define NITRO_CAP_FAN_MODE		BIT(1)
-#define NITRO_CAP_HWMON			BIT(2)
-#define NITRO_CAP_PLATFORM_PROFILE	BIT(3)
-#define NITRO_CAP_RGB			BIT(4)
-#define NITRO_CAP_RGB_DYNAMIC		BIT(5)
-#define NITRO_CAP_COOLBOOST		BIT(6)
-#define NITRO_CAP_LED_CLASS		BIT(7)
+#define NITRO_FANBIT_CPU			0x01
+#define NITRO_FANBIT_GPU			0x08
+#define NITRO_FANBIT_BOTH			0x09
+
+#define NITRO_CAP_FAN				BIT(0)
+#define NITRO_CAP_FAN_MODE			BIT(1)
+#define NITRO_CAP_HWMON				BIT(2)
+#define NITRO_CAP_PLATFORM_PROFILE		BIT(3)
+#define NITRO_CAP_RGB				BIT(4)
+#define NITRO_CAP_RGB_DYNAMIC			BIT(5)
+#define NITRO_CAP_COOLBOOST			BIT(6)
+#define NITRO_CAP_LED_CLASS			BIT(7)
+#define NITRO_CAP_KBD_TIMEOUT			BIT(8)
 
 #define NITRO_CAP_ALL \
 	(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON | \
 	NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB | NITRO_CAP_RGB_DYNAMIC | \
-	NITRO_CAP_COOLBOOST | NITRO_CAP_LED_CLASS)
+	NITRO_CAP_COOLBOOST | NITRO_CAP_LED_CLASS | NITRO_CAP_KBD_TIMEOUT)
 
-#define NITRO_MAX_ZONES			4
-#define NITRO_WMI_MAX_PAYLOAD		64
-#define NITRO_INPUT_MAX			128
+#define NITRO_MAX_ZONES				4
+#define NITRO_WMI_MAX_PAYLOAD			64
+#define NITRO_INPUT_MAX				128
 
 enum nitro_fan_mode {
-	NITRO_FAN_MODE_AUTO		= 1,
-	NITRO_FAN_MODE_MAX		= 2,
-	NITRO_FAN_MODE_CUSTOM		= 3,
+	NITRO_FAN_MODE_AUTO			= 1,
+	NITRO_FAN_MODE_MAX			= 2,
+	NITRO_FAN_MODE_CUSTOM			= 3,
 };
 
 enum nitro_ftbl {
-	NITRO_FTBL_BALANCED		= 0x00,
-	NITRO_FTBL_QUIET		= 0x01,
-	NITRO_FTBL_PERF			= 0x02,
-	NITRO_FTBL_TURBO		= 0x03,
-	NITRO_FTBL_ECO			= 0x04,
+	NITRO_FTBL_BALANCED			= 0x00,
+	NITRO_FTBL_QUIET			= 0x01,
+	NITRO_FTBL_PERF				= 0x02,
+	NITRO_FTBL_TURBO			= 0x03,
+	NITRO_FTBL_ECO				= 0x04,
 };
 
 enum nitro_profile_backend {
-	NITRO_PROFILE_NONE		= 0,
-	NITRO_PROFILE_FTBL		= 1,
+	NITRO_PROFILE_NONE			= 0,
+	NITRO_PROFILE_FTBL			= 1,
 };
 
 enum nitro_coolboost_backend {
-	NITRO_COOLBOOST_NONE		= 0,
-	NITRO_COOLBOOST_EC10		= 1,
+	NITRO_COOLBOOST_NONE			= 0,
+	NITRO_COOLBOOST_EC10			= 1,
 };
 
 struct nitro_quirks {
@@ -114,11 +128,12 @@ struct nitro_quirks {
 	const char *tested_bios;
 };
 
+// Quirks list (Model + Board + BIOS)
 static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON |
 			NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB |
 			NITRO_CAP_RGB_DYNAMIC | NITRO_CAP_COOLBOOST |
-			NITRO_CAP_LED_CLASS,
+			NITRO_CAP_LED_CLASS | NITRO_CAP_KBD_TIMEOUT,
 	.rgb_zones = 4,
 	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_FTBL,
@@ -127,6 +142,32 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.has_misc = true,
 	.board = "Scala_TLS",
 	.tested_bios = "V1.22",
+};
+
+static const struct nitro_quirks nitro_quirks_an515_58_probe = {
+	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
+			NITRO_CAP_HWMON | NITRO_CAP_RGB,
+	.rgb_zones = 4,
+	.dynamic_effects = 0,
+	.profile_backend = NITRO_PROFILE_NONE,
+	.coolboost_backend = NITRO_COOLBOOST_NONE,
+	.fan_count = 2,
+	.has_misc = true,
+	.board = "Jimny_ADH",
+	.tested_bios = "V2.21",
+};
+
+static const struct nitro_quirks nitro_quirks_an515_45_probe = {
+	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
+			NITRO_CAP_HWMON | NITRO_CAP_RGB,
+	.rgb_zones = 4,
+	.dynamic_effects = 0,
+	.profile_backend = NITRO_PROFILE_NONE,
+	.coolboost_backend = NITRO_COOLBOOST_NONE,
+	.fan_count = 2,
+	.has_misc = true,
+	.board = "Scala_CAS",
+	.tested_bios = "V1.14",
 };
 
 static int nitro_validate_quirks(const struct nitro_quirks *q)
@@ -274,14 +315,16 @@ static int nitro_validate_quirks(const struct nitro_quirks *q)
  */
 static int nitro_validate_probe_quirks(const struct nitro_quirks *q)
 {
-	if (q->capabilities &
-	    (NITRO_CAP_COOLBOOST | NITRO_CAP_PLATFORM_PROFILE |
-	     NITRO_CAP_LED_CLASS)) {
+	if (
+		q->capabilities &
+		(NITRO_CAP_COOLBOOST | NITRO_CAP_PLATFORM_PROFILE |
+		NITRO_CAP_LED_CLASS | NITRO_CAP_KBD_TIMEOUT)) {
 		pr_err("quirks: probe entry advertises unverified capabilities\n");
 		return -EINVAL;
 	}
-	if (q->coolboost_backend != NITRO_COOLBOOST_NONE ||
-	    q->profile_backend != NITRO_PROFILE_NONE) {
+	if (
+		q->coolboost_backend != NITRO_COOLBOOST_NONE ||
+		q->profile_backend != NITRO_PROFILE_NONE) {
 		pr_err("quirks: probe entry must use NONE backends\n");
 		return -EINVAL;
 	}
@@ -296,6 +339,7 @@ static bool disable_hwmon;
 static bool disable_profile;
 static bool disable_rgb;
 static bool disable_coolboost;
+static bool disable_kbd_timeout;
 
 module_param_named(probe, probe_mode, bool, 0444);
 MODULE_PARM_DESC(probe, "Read-only probe mode for unverified models");
@@ -309,6 +353,8 @@ module_param(disable_rgb, bool, 0444);
 MODULE_PARM_DESC(disable_rgb, "Disable RGB and LED registration");
 module_param(disable_coolboost, bool, 0444);
 MODULE_PARM_DESC(disable_coolboost, "Disable CoolBoost control");
+module_param(disable_kbd_timeout, bool, 0444);
+MODULE_PARM_DESC(disable_kbd_timeout, "Disable keyboard backlight timeout control");
 
 struct nitro_device;
 
@@ -337,10 +383,13 @@ struct nitro_device {
 	u8 saved_dyn[16];
 	u8 saved_ftbl;
 	u8 saved_coolboost;
+	u8 saved_kbd_timeout;
+	u8 cur_kbd_timeout;
 	bool have_rgb;
 	bool have_dyn;
 	bool have_ftbl;
 	bool have_coolboost;
+	bool have_kbd_timeout;
 	bool have_saved;
 	u8 cur_zone[NITRO_MAX_ZONES][3];
 	u8 wmi_raw_out[16];
@@ -658,6 +707,105 @@ static int nitro_set_coolboost(u8 value)
 	if (ret)
 		return ret;
 	if ((check & 1) != value)
+		return -EIO;
+	return 0;
+}
+
+static int nitro_apge_call(u32 method, u64 in, u64 *out)
+{
+	struct acpi_buffer input = { sizeof(in), &in };
+	struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
+	union acpi_object *obj;
+	acpi_status status;
+	u64 value = 0;
+
+	if (method != NITRO_APGE_SET && method != NITRO_APGE_GET)
+		return -EINVAL;
+
+	status = wmi_evaluate_method(
+		NITRO_APGE_GUID, 0, method, &input, &output);
+	if (ACPI_FAILURE(status)) {
+		pr_debug("APGE 0x%x evaluate failed: %s\n",
+			method, acpi_format_exception(status));
+		return -EIO;
+	}
+
+	obj = output.pointer;
+	if (!obj)
+		return -ENODATA;
+
+	if (obj->type == ACPI_TYPE_INTEGER) {
+		value = obj->integer.value;
+	} else if (obj->type == ACPI_TYPE_BUFFER) {
+		if (obj->buffer.length == sizeof(u32)) {
+			u32 tmp;
+
+			memcpy(&tmp, obj->buffer.pointer, sizeof(tmp));
+			value = tmp;
+		} else if (obj->buffer.length == sizeof(u64)) {
+			memcpy(&value, obj->buffer.pointer, sizeof(value));
+		} else {
+			pr_debug("APGE 0x%x reply length %u\n",
+				method, obj->buffer.length);
+			kfree(obj);
+			return -EPROTO;
+		}
+	} else {
+		pr_debug("APGE 0x%x unexpected type %d\n", method, obj->type);
+		kfree(obj);
+		return -EPROTO;
+	}
+	kfree(obj);
+
+	if (out)
+		*out = value;
+	return 0;
+}
+
+static int nitro_get_kbd_timeout(u8 *enabled)
+{
+	u64 value;
+	int ret = nitro_apge_call(
+		NITRO_APGE_GET, NITRO_APGE_KBD_TIMEOUT_QUERY, &value);
+
+	if (ret)
+		return ret;
+	if (
+		value == NITRO_APGE_KBD_TIMEOUT_ON_REPLY ||
+		value == NITRO_APGE_KBD_TIMEOUT_ON_UNSET) {
+		*enabled = 1;
+		return 0;
+	}
+	if (value == NITRO_APGE_KBD_TIMEOUT_OFF_REPLY) {
+		*enabled = 0;
+		return 0;
+	}
+	if (
+		value &&
+		!(value & ~(NITRO_APGE_KBD_TIMEOUT_DURATION_MASK |
+				NITRO_APGE_KBD_TIMEOUT_VALID))) {
+		*enabled = (value & NITRO_APGE_KBD_TIMEOUT_DURATION_MASK) ? 1 : 0;
+		return 0;
+	}
+	pr_debug("APGE keyboard timeout reply 0x%llx\n", value);
+	return -EPROTO;
+}
+
+static int nitro_set_kbd_timeout(bool on)
+{
+	u64 value;
+	u8 check;
+	int ret = nitro_apge_call(
+		NITRO_APGE_SET,
+		on ? NITRO_APGE_KBD_TIMEOUT_ON : NITRO_APGE_KBD_TIMEOUT_OFF,
+		&value);
+
+	if (ret)
+		return ret;
+	ret = nitro_get_kbd_timeout(&check);
+	if (ret)
+		return ret;
+	if (check != on)
 		return -EIO;
 	return 0;
 }
@@ -1136,6 +1284,63 @@ static ssize_t coolboost_store(
 	return count;
 }
 static DEVICE_ATTR_RW(coolboost);
+
+static ssize_t kbd_timeout_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+
+	if (!nitro)
+		return -ENODEV;
+	if (!nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT))
+		return -ENODEV;
+	return sysfs_emit(buf, "%u\n", nitro->cur_kbd_timeout);
+}
+
+static ssize_t kbd_timeout_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	unsigned long v;
+	bool on;
+	int ret;
+
+	if (!nitro)
+		return -ENODEV;
+	if (nitro->probe_mode)
+		return -EPERM;
+	if (!nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT))
+		return -ENODEV;
+	if (count > NITRO_INPUT_MAX)
+		return -EINVAL;
+	if (sysfs_streq(buf, "on")) {
+		on = true;
+	} else if (sysfs_streq(buf, "off")) {
+		on = false;
+	} else {
+		ret = kstrtoul(buf, 10, &v);
+		if (ret)
+			return ret;
+		if (v > 1)
+			return -ERANGE;
+		on = v;
+	}
+	mutex_lock(&nitro->lock);
+	ret = nitro_set_kbd_timeout(on);
+	if (!ret)
+		nitro->cur_kbd_timeout = on;
+	mutex_unlock(&nitro->lock);
+	if (ret)
+		return ret;
+	pr_info_ratelimited("keyboard timeout %s\n", on ? "on" : "off");
+	return count;
+}
+static DEVICE_ATTR_RW(kbd_timeout);
 
 static ssize_t ftbl_show(
 	struct device *dev,
@@ -1925,6 +2130,8 @@ static ssize_t capabilities_show(
 		n += sysfs_emit_at(buf, n, " coolboost=ec10");
 	if (nitro->capabilities & NITRO_CAP_LED_CLASS)
 		n += sysfs_emit_at(buf, n, " led=1");
+	if (nitro->capabilities & NITRO_CAP_KBD_TIMEOUT)
+		n += sysfs_emit_at(buf, n, " kbd_timeout=1");
 	n += sysfs_emit_at(buf, n, "\n");
 	return n;
 }
@@ -1973,8 +2180,7 @@ static umode_t nitro_attr_is_visible(
 			return 0;
 	} else if (!strcmp(attr->name, "coolboost")) {
 		if (
-			(nitro->capabilities &
-			 (NITRO_CAP_COOLBOOST | NITRO_CAP_FAN_MODE)) !=
+			(nitro->capabilities & (NITRO_CAP_COOLBOOST | NITRO_CAP_FAN_MODE)) !=
 			(NITRO_CAP_COOLBOOST | NITRO_CAP_FAN_MODE) ||
 			q->coolboost_backend != NITRO_COOLBOOST_EC10)
 			return 0;
@@ -1993,6 +2199,9 @@ static umode_t nitro_attr_is_visible(
 		!strcmp(attr->name, "kbd_static") ||
 		!strcmp(attr->name, "kbd_bright")) {
 		if (!(nitro->capabilities & NITRO_CAP_RGB))
+			return 0;
+	} else if (!strcmp(attr->name, "kbd_timeout")) {
+		if (!(nitro->capabilities & NITRO_CAP_KBD_TIMEOUT))
 			return 0;
 	} else if (!strcmp(attr->name, "kbd_dynamic")) {
 		if (
@@ -2017,6 +2226,7 @@ static struct attribute *nitro_attrs[] = {
 	&dev_attr_fan_gpu.attr,
 	&dev_attr_fan_mode.attr,
 	&dev_attr_coolboost.attr,
+	&dev_attr_kbd_timeout.attr,
 	&dev_attr_ftbl.attr,
 	&dev_attr_tkst.attr,
 	&dev_attr_opms.attr,
@@ -2039,6 +2249,7 @@ static const struct attribute_group *nitro_groups[] = {
 	NULL,
 };
 
+// Verified List (Model + Board)
 static const struct dmi_system_id nitro_dmi[] __initconst = {
 	{
 		.matches = {
@@ -2052,12 +2263,29 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 };
 MODULE_DEVICE_TABLE(dmi, nitro_dmi);
 
+// Probe List (Model + Board)
 /*
  * Probe-only DMI entries. Each entry is added by a maintainer after a Model
  * Support Report is triaged, and points at a quirks struct that advertises
  * only read paths (see nitro_validate_probe_quirks()).
  */
 static const struct dmi_system_id nitro_probe_dmi[] __initconst = {
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-58"),
+			DMI_MATCH(DMI_BOARD_NAME, "Jimny_ADH"),
+		},
+		.driver_data = (void *)&nitro_quirks_an515_58_probe,
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-45"),
+			DMI_MATCH(DMI_BOARD_NAME, "Scala_CAS"),
+		},
+		.driver_data = (void *)&nitro_quirks_an515_45_probe,
+	},
 	{}
 };
 
@@ -2091,6 +2319,12 @@ static void nitro_save_initial(struct nitro_device *nitro)
 		!nitro_get_coolboost(&d)) {
 		nitro->saved_coolboost = d;
 		nitro->have_coolboost = true;
+	}
+	if (
+		nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
+		!nitro_get_kbd_timeout(&nitro->saved_kbd_timeout)) {
+		nitro->cur_kbd_timeout = nitro->saved_kbd_timeout;
+		nitro->have_kbd_timeout = true;
 	}
 	if (nitro_has_cap(nitro, NITRO_CAP_RGB)) {
 		nitro->have_rgb = true;
@@ -2158,6 +2392,8 @@ static void nitro_log_state(struct nitro_device *nitro)
 		pr_info("dyn raw %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
 			dyn[0], dyn[1], dyn[2], dyn[3], dyn[4], dyn[5], dyn[6], dyn[7],
 			dyn[8], dyn[9], dyn[10], dyn[11], dyn[12], dyn[13], dyn[14], dyn[15]);
+	if (nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT))
+		pr_info("kbd_timeout=%u\n", nitro->cur_kbd_timeout);
 	if (nitro->quirks->has_misc && !nitro_get_misc(0x01, &tkst))
 		pr_info("TKST=0x%02x\n", tkst);
 	if (nitro->quirks->has_misc && !nitro_get_misc(0x0B, &opms))
@@ -2235,6 +2471,16 @@ static int __init nitro_init(void)
 			NITRO_CAP_RGB_DYNAMIC | NITRO_CAP_LED_CLASS);
 	if (disable_coolboost)
 		nitro->capabilities &= ~NITRO_CAP_COOLBOOST;
+	if (disable_kbd_timeout)
+		nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+
+	if (
+		(nitro->capabilities & NITRO_CAP_KBD_TIMEOUT) &&
+		!wmi_has_guid(NITRO_APGE_GUID)) {
+		pr_warn("APGE WMI GUID %s missing; disabling keyboard timeout\n",
+			NITRO_APGE_GUID);
+		nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+	}
 
 	nitro_pdev = platform_device_register_simple("nitro", -1, NULL, 0);
 	if (IS_ERR(nitro_pdev)) {
@@ -2247,8 +2493,15 @@ static int __init nitro_init(void)
 	platform_set_drvdata(nitro_pdev, nitro);
 
 	mutex_lock(&nitro->lock);
-	if (!nitro->probe_mode)
+	if (!nitro->probe_mode) {
 		nitro_save_initial(nitro);
+		if (
+			(nitro->capabilities & NITRO_CAP_KBD_TIMEOUT) &&
+			!nitro->have_kbd_timeout) {
+			pr_warn("keyboard timeout read failed; disabling\n");
+			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+		}
+	}
 	nitro_log_state(nitro);
 	mutex_unlock(&nitro->lock);
 
@@ -2295,7 +2548,7 @@ static int __init nitro_init(void)
 		return 0;
 	}
 
-	pr_info("capabilities: fan=%u fan_mode=%u hwmon=%u profile=%u rgb=%u dyn=%u coolboost=%u led=%u\n",
+	pr_info("capabilities: fan=%u fan_mode=%u hwmon=%u profile=%u rgb=%u dyn=%u coolboost=%u led=%u kbd_timeout=%u\n",
 		!!nitro_has_cap(nitro, NITRO_CAP_FAN),
 		!!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE),
 		!!nitro_has_cap(nitro, NITRO_CAP_HWMON),
@@ -2303,7 +2556,8 @@ static int __init nitro_init(void)
 		!!nitro_has_cap(nitro, NITRO_CAP_RGB),
 		!!nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC),
 		!!nitro_has_cap(nitro, NITRO_CAP_COOLBOOST),
-		!!nitro_has_cap(nitro, NITRO_CAP_LED_CLASS));
+		!!nitro_has_cap(nitro, NITRO_CAP_LED_CLASS),
+		!!nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT));
 	return 0;
 
 err_pdev:
@@ -2383,6 +2637,11 @@ static void __exit nitro_exit(void)
 			nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) &&
 			nitro_set_coolboost(nitro->saved_coolboost))
 			pr_warn("CoolBoost restore failed\n");
+		if (
+			nitro->have_kbd_timeout &&
+			nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
+			nitro_set_kbd_timeout(!!nitro->saved_kbd_timeout))
+			pr_warn("keyboard timeout restore failed\n");
 		pr_info("restored fan %u/%u ftbl 0x%02x coolboost %u\n",
 			nitro->saved_fan_cpu, nitro->saved_fan_gpu,
 			nitro->saved_ftbl,

@@ -36,6 +36,7 @@ from model import (
     CAP_RGB_DYNAMIC,
     CAP_COOLBOOST,
     CAP_LED_CLASS,
+    CAP_KBD_TIMEOUT,
 )
 
 BASE = pathlib.Path("/sys/devices/platform/nitro")
@@ -92,6 +93,7 @@ def status():
         ("kbd_dynamic", QUIRKS.has_cap(CAP_RGB_DYNAMIC)),
         ("kbd_zone1", QUIRKS.has_cap(CAP_RGB)),
         ("coolboost", QUIRKS.has_cap(CAP_COOLBOOST)),
+        ("kbd_timeout", QUIRKS.has_cap(CAP_KBD_TIMEOUT)),
         ("ec_cpu_temp", QUIRKS.has_cap(CAP_HWMON)),
     ]
     for name, enabled in attrs:
@@ -165,6 +167,32 @@ def set_coolboost(value):
         except OSError as e:
             raise SystemExit(f"coolboost: {e.strerror or e}")
     print(f"coolboost: {read('coolboost')}")
+
+def get_kbd_timeout():
+    if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        raise SystemExit("keyboard timeout not supported on this model")
+    print(f"kbd_timeout: {read('kbd_timeout')}")
+
+
+def set_kbd_timeout(value):
+    require_writable()
+    if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+        raise SystemExit("keyboard timeout not supported on this model")
+    v = str(value).lower()
+    if v not in ("on", "off", "1", "0"):
+        raise SystemExit("kbd-timeout must be 'on' or 'off'")
+    on = v in ("on", "1")
+    r = daemon_set("kbd_timeout", on)
+    if r is not None:
+        if not r.get("ok"):
+            raise SystemExit(f"kbd-timeout: {r.get('err', 'failed')}")
+    else:
+        try:
+            (BASE / "kbd_timeout").write_text("1" if on else "0")
+        except OSError as e:
+            raise SystemExit(f"kbd-timeout: {e.strerror or e}")
+    print(f"kbd_timeout: {read('kbd_timeout')}")
+
 
 def set_dyn(mode, speed, brightness, direction, r, g, b):
     require_writable()
@@ -1150,7 +1178,7 @@ def default_key_command():
             f"{shlex.quote(terminal)} "
             "--override remember_window_size=no "
             "--override initial_window_width=120c "
-            "--override initial_window_height=47c "
+            "--override initial_window_height=45c "
             f"{quoted}"
         )
     terminal = shutil.which("alacritty")
@@ -1158,33 +1186,33 @@ def default_key_command():
         return (
             f"{shlex.quote(terminal)} "
             "-o window.dimensions.columns=120 "
-            "-o window.dimensions.lines=47 "
+            "-o window.dimensions.lines=45 "
             f"-e {quoted}"
         )
     terminal = shutil.which("foot")
     if terminal:
-        return f"{shlex.quote(terminal)} -w 120x47 {quoted}"
+        return f"{shlex.quote(terminal)} -w 120x45 {quoted}"
     terminal = shutil.which("wezterm")
     if terminal:
         return f"{shlex.quote(terminal)} start -- {quoted}"
     terminal = shutil.which("konsole")
     if terminal:
-        return f"{shlex.quote(terminal)} --geometry 120x47 -e {quoted}"
+        return f"{shlex.quote(terminal)} --geometry 120x45 -e {quoted}"
     terminal = shutil.which("gnome-terminal")
     if terminal:
         return f"{shlex.quote(terminal)} --window -- {quoted}"
     terminal = shutil.which("xfce4-terminal")
     if terminal:
-        return f"{shlex.quote(terminal)} --geometry=120x47 -x {quoted}"
+        return f"{shlex.quote(terminal)} --geometry=120x45 -x {quoted}"
     terminal = shutil.which("mate-terminal")
     if terminal:
-        return f"{shlex.quote(terminal)} --geometry=120x47 -x {quoted}"
+        return f"{shlex.quote(terminal)} --geometry=120x45 -x {quoted}"
     terminal = shutil.which("x-terminal-emulator")
     if terminal:
-        return f"{shlex.quote(terminal)} -geometry 120x47 -e {quoted}"
+        return f"{shlex.quote(terminal)} -geometry 120x45 -e {quoted}"
     terminal = shutil.which("xterm")
     if terminal:
-        return f"{shlex.quote(terminal)} -geometry 120x47 -e {quoted}"
+        return f"{shlex.quote(terminal)} -geometry 120x45 -e {quoted}"
     return quoted
 
 
@@ -1413,6 +1441,7 @@ def usage():
     print("               | rgb <zone 1|2|4|8> <r> <g> <b>")
     print("               | fan <cpu|gpu> <0-100>")
     print("               | coolboost <on|off>          (fans must be auto)")
+    print("               | kbd-timeout [on|off]        (30-sec keyboard backlight timer)")
     print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
     print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
     print("               | key [status|auto|find|bind|unbind|listen]")
@@ -1448,6 +1477,13 @@ if __name__ == "__main__":
         set_fan(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "coolboost" and len(sys.argv) == 3:
         set_coolboost(sys.argv[2])
+    elif sys.argv[1] in ("kbd-timeout", "kbd_timeout"):
+        if len(sys.argv) == 2:
+            get_kbd_timeout()
+        elif len(sys.argv) == 3:
+            set_kbd_timeout(sys.argv[2])
+        else:
+            usage()
     elif sys.argv[1] == "dyn" and len(sys.argv) == 9:
         set_dyn(*sys.argv[2:9])
     elif sys.argv[1] == "profile" and len(sys.argv) == 3:

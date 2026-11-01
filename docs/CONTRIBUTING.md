@@ -33,9 +33,14 @@ Open a **Model support report** issue and paste the output. Also include:
 
 ## Read-only probe (candidate models)
 
-No model is currently in the probe table. A candidate probe entry is added only
-after a Model Support Report is triaged. Once a candidate probe entry exists for
-your model, you can load the module in read-only mode:
+A candidate probe entry is added only after a Model Support Report is triaged, and it keeps the full `sys_vendor` + `product_name` + `board_name` triad. Current probe table:
+
+| Product        | Board     | BIOS  | Probe reads                             |
+| -------------- | --------- | ----- | --------------------------------------- |
+| Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, hwmon, 4x static RGB |
+| Nitro AN515-45 | Scala_CAS | V1.14 | 2x fans, fan mode, hwmon, 4x static RGB |
+
+If your model is in the table, load the module in read-only mode:
 
 ```bash
 sudo modprobe -r nitro 2>/dev/null || true
@@ -58,7 +63,7 @@ strings.
 3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost, one at a time
 4. With recorded evidence, the model gets a quirk entry and moves to **Verified**
 
-CoolBoost is never enabled without direct EC evidence on **that specific model**.
+CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on, `0x80000` off).
 
 ---
 
@@ -67,7 +72,7 @@ CoolBoost is never enabled without direct EC evidence on **that specific model**
 The driver exposes `/sys/devices/platform/nitro/capabilities` — a space-separated `key=value` list:
 
 ```text
-probe=0 fan=1 fan_count=2 fan_mode=1 hwmon=1 profile=ftbl rgb=4 dyn=5 coolboost=ec10 led=1
+probe=0 fan=1 fan_count=2 fan_mode=1 hwmon=1 profile=ftbl rgb=4 dyn=5 coolboost=ec10 led=1 kbd_timeout=1
 ```
 
 Userspace (daemon, TUI, CLI, `nitro-apply`) reads this at startup and **only enables features that are present**. If a capability is missing, the corresponding controls are hidden/disabled.

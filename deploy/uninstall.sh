@@ -79,6 +79,20 @@ for d in /usr/src/nitro-[0-9]*; do
   echo "[*] remove $d"
   rm -rf "$d"
 done
+echo "[*] remove module files not managed by dkms"
+for k in /lib/modules/*; do
+  [ -d "$k" ] || continue
+  for f in "$k"/updates/dkms/nitro.ko* "$k"/updates/nitro.ko* "$k"/extra/nitro.ko* "$k"/kernel/drivers/platform/x86/nitro.ko*; do
+    [ -e "$f" ] || continue
+    if command -v pacman >/dev/null 2>&1 && pacman -Qo "$f" >/dev/null 2>&1; then
+      echo "[!] $f is owned by a package; leaving it"
+      continue
+    fi
+    echo "[*] remove $f"
+    rm -f "$f"
+  done
+  depmod -a "${k##*/}" 2>/dev/null || true
+done
 echo "[*] rebuild initramfs (purge nitro)"
 if command -v dracut-rebuild >/dev/null 2>&1; then
   dracut-rebuild

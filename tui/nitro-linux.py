@@ -18,6 +18,7 @@ keys
                 static:  1-4 zone, enter colour, x on/off
                 dynamic: 1-5 effect, t/T speed, f direction
                 brightness (l/L), picker (Enter/#), click swatches
+                k           30-sec backlight timeout on/off
 
     refresh     - faster, + slower (100 ms per step)
 """
@@ -76,6 +77,7 @@ from model import (
     CAP_RGB_DYNAMIC,
     CAP_COOLBOOST,
     CAP_LED_CLASS,
+    CAP_KBD_TIMEOUT,
 )
 
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
@@ -570,6 +572,22 @@ class UI:
             return None
         return str(v).strip() in ("1", "on", "true")
 
+    def kbd_timeout_live(self):
+        v = self.live.get("kbd_timeout")
+        if v is None:
+            return None
+        return str(v).strip() in ("1", "on", "true")
+
+    def toggle_kbd_timeout(self):
+        on = self.kbd_timeout_live()
+        if on is None:
+            self.msg = "!! keyboard timeout unavailable (not supported on this model)"
+            self.msg_time = time.time()
+            return
+        self.send(
+            {"cmd": "set", "key": "kbd_timeout", "value": not on},
+            f"30-sec keyboard timeout → {'ON' if not on else 'OFF'}")
+
     def toggle_coolboost(self):
         if self.fan_sel() != "auto":
             self.msg = "» CoolBoost is only available in Auto mode"
@@ -747,8 +765,8 @@ class UI:
         self.eclicks = []
         self.swatches = []
         h, w = s.getmaxyx()
-        if w < 120 or h < 47:
-            self.need_msg(120, 47)
+        if w < 120 or h < 45:
+            self.need_msg(120, 45)
             return
         self.h, self.w = h, w
         ym = 1 + (h - 1) // 2
@@ -1119,16 +1137,30 @@ class UI:
         self.addstr(y0, kx, "(F)", curses.color_pair(C.DIM))
         self.click(y0, kx, 1, 3, ("temp",))
 
+    def draw_kbd_timeout(self, y, x0):
+        label = "(k) Backlight 30s Timeout"
+        if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
+            self.addstr(
+                y, x0, f"{label} unavailable", curses.color_pair(C.DIM))
+            return
+        on = self.kbd_timeout_live()
+        state = "--" if on is None else ("● ON" if on else "○ OFF")
+        text = f"{label}  {state}"
+        attr = curses.color_pair(C.FG) | curses.A_BOLD
+        self.addstr(y, x0, text, attr)
+        self.click(y, x0, 1, len(text), ("kbdtimeout",))
+
     def draw_keyboard(self, py, px, ph, pw):
+        x0, x1 = px + 1, px + pw - 2
+        y0, y1 = py + 1, py + ph - 2
         if not QUIRKS.has_cap(CAP_RGB):
             text = "Keyboard RGB unavailable"
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
             self.addstr(y, x, text, curses.color_pair(C.DIM))
+            self.draw_kbd_timeout(y0 + 1, x0)
             return
-        x0, x1 = px + 1, px + pw - 2
-        y0, y1 = py + 1, py + ph - 2
         mode = self.kbd_mode()
         tabs = [("static", "([) Static", ("tab", "static"))]
         if QUIRKS.has_cap(CAP_RGB_DYNAMIC):
@@ -1136,11 +1168,12 @@ class UI:
         else:
             tabs.append(("dynamic", "(]) Dynamic (unavailable)", ("tab", "dynamic")))
         self.seg_tabs(y0, x0, x1 - x0 + 1, tabs, mode)
+        self.draw_kbd_timeout(y0 + 3, x0)
         if mode == "static":
-            self.draw_static(x0, y0 + 4, x1, y1)
+            self.draw_static(x0, y0 + 5, x1, y1)
         else:
             if QUIRKS.has_cap(CAP_RGB_DYNAMIC):
-                self.draw_dynamic(x0, y0 + 4, x1, y1)
+                self.draw_dynamic(x0, y0 + 5, x1, y1)
             else:
                 text = "Dynamic effects unavailable"
                 inner_w = x1 - x0 + 1
@@ -1391,7 +1424,7 @@ class UI:
             ("b", "  *([)* static      *(])* dynamic      (tab bar, clickable)"),
             ("b", "  static    *(1-4)* zone   *(x)* on/off   *(enter/#)* custom colour"),
             ("b", "  dynamic   *(1-5)* effect   *(t)* speed   *(f)* direction   *(#)* custom colour"),
-            ("b", "  brightness   *(l)*  *(L)*"),
+            ("b", "  brightness   *(l)*  *(L)*     30-sec timeout   *(k)*"),
             ("s", ""),
             ("h", "thermal"),
             ("b", "  *(F)*  switch °C / °F"),
@@ -1555,6 +1588,8 @@ class UI:
                 self.set_fan_mode(action[1])
             elif kind == "coolboost":
                 self.toggle_coolboost()
+            elif kind == "kbdtimeout":
+                self.toggle_kbd_timeout()
             elif kind == "plan":
                 self.set_plan(action[1])
             elif kind == "tab":
@@ -1659,6 +1694,8 @@ class UI:
             self.set_fan_mode("custom")
         elif ch in (ord("i"), ord("I")):
             self.toggle_coolboost()
+        elif ch in (ord("k"), ord("K")):
+            self.toggle_kbd_timeout()
         elif ch in (ord("."), ord("/"), ord(";"), ord("'")):
             which = "cpu" if ch in (ord("."), ord("/")) else "gpu"
             cur = self.duty(which)
