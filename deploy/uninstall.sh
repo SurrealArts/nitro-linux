@@ -80,6 +80,7 @@ rm -f /usr/local/bin/nitro-apply /usr/local/bin/nitrod /usr/local/bin/nitro-linu
 rm -rf /usr/local/lib/nitro
 rm -f /usr/local/lib/systemd/user/nitro-key.service
 rm -f /etc/modules-load.d/nitro.conf
+rm -f /etc/modprobe.d/nitro-linux.conf
 # Leftovers from older source installs and from package-style layouts.
 rm -f /usr/lib/sysusers.d/nitro-linux.conf /usr/local/lib/sysusers.d/nitro-linux.conf
 rm -f /usr/lib/tmpfiles.d/nitro-linux.conf /usr/local/lib/tmpfiles.d/nitro-linux.conf

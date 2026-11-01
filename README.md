@@ -46,6 +46,8 @@ sudo bash deploy/install.sh
 sudo bash deploy/uninstall.sh
 ```
 
+If your model only has a **probe** entry, the driver refuses to load without `probe=1`. Install with `sudo bash deploy/install.sh --probe`, which writes `options nitro probe=1` to `/etc/modprobe.d/nitro-linux.conf` so the module also loads read-only at boot.
+
 If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS, the DKMS Secure Boot preflight, and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. Before changing the userspace tree it checks the installed module's version against this checkout and aborts on a mismatch; after loading it checks `/sys/module/nitro/version` again. Your signature is your responsibility in this mode. **Only do this when you know what you are doing!**
 
 ## Use

@@ -3,14 +3,17 @@ set -e
 cd "$(dirname "$0")/.."
 
 MANUAL_MODULE=0
+PROBE_MODE=0
 MOK_CERT_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
-usage: sudo bash deploy/install.sh [--manual-module] [--mok-cert PATH]
+usage: sudo bash deploy/install.sh [--manual-module] [--probe] [--mok-cert PATH]
 
   --manual-module   skip DKMS; install the userspace tools and services only.
                     Use this when you built and signed the kernel module yourself.
+  --probe           load the module read-only for a probe-listed model. Writes
+                    'options nitro probe=1' to /etc/modprobe.d/nitro-linux.conf.
   --mok-cert PATH   certificate Secure Boot should have enrolled, when it is not
                     the one DKMS is configured with.
   -h, --help        show this help
@@ -20,6 +23,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --manual-module) MANUAL_MODULE=1 ;;
+    --probe) PROBE_MODE=1 ;;
     --mok-cert)
       shift
       if [ $# -eq 0 ]; then
@@ -329,6 +333,17 @@ if [ -f "$VFILE" ]; then
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
+if [ "$PROBE_MODE" -eq 1 ]; then
+  install -d -m755 /etc/modprobe.d
+  printf '# nitro-linux: read-only probe mode, added by deploy/install.sh --probe\noptions nitro probe=1\n' \
+    > /etc/modprobe.d/nitro-linux.conf
+  chmod 644 /etc/modprobe.d/nitro-linux.conf
+  echo "[*] probe mode: options nitro probe=1 in /etc/modprobe.d/nitro-linux.conf"
+elif [ -f /etc/modprobe.d/nitro-linux.conf ] &&
+     grep -qs 'deploy/install.sh --probe' /etc/modprobe.d/nitro-linux.conf; then
+  rm -f /etc/modprobe.d/nitro-linux.conf
+  echo "[*] probe mode: drop-in removed"
+fi
 tighten_state
 add_user_nitro
 systemctl daemon-reload
@@ -345,15 +360,32 @@ else
     echo "[*] manual module mode: loading $(uname -r) module via modprobe"
   fi
   modprobe nitro || {
-    dmesg | tail -5
+    LOG=$(dmesg 2>/dev/null | grep -i 'nitro:' | tail -5 || true)
+    [ -n "$LOG" ] && printf '%s\n' "$LOG" >&2
     echo "[!] modprobe failed." >&2
-    if secure_boot_on; then
-      if [ "$MANUAL_MODULE" -eq 1 ]; then
-        echo "    Secure Boot is ON: the key that signed your module must be enrolled (mokutil --import), then reboot." >&2
-      else
-        echo "    Secure Boot is ON: enroll the signing key $(mok_cert) and reboot." >&2
-      fi
-    fi
+    case "$LOG" in
+      *"DMI match failed"*)
+        if [ "$PROBE_MODE" -eq 1 ]; then
+          echo "    probe=1 is already set, so this model has no DMI entry at all." >&2
+          echo "    run 'nitro report' and open a model support issue." >&2
+        else
+          echo "    this model is not in the verified DMI list. If it has a probe entry," >&2
+          echo "    re-run with --probe to load it read-only." >&2
+        fi
+        ;;
+      *"WMI GUID"*)
+        echo "    the Acer WMI GUID is not exposed by this firmware; nitro cannot bind." >&2
+        ;;
+      *)
+        if secure_boot_on; then
+          if [ "$MANUAL_MODULE" -eq 1 ]; then
+            echo "    Secure Boot is ON: the key that signed your module must be enrolled (mokutil --import), then reboot." >&2
+          else
+            echo "    Secure Boot is ON: enroll the signing key $(mok_cert) and reboot." >&2
+          fi
+        fi
+        ;;
+    esac
     exit 1
   }
 fi
