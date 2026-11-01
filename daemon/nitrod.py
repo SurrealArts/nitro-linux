@@ -67,7 +67,7 @@ SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
 LOCK = SOCK + ".lock"
 SOCK_GROUP = os.environ.get("NITRO_SOCK_GROUP", "nitro")
 SYS = os.environ.get("NITRO_SYS", "/sys/devices/platform/nitro")
-VERSION = "2.3.4"
+VERSION = "2.3.5"
 
 _PP = find_platform_profile()
 PP = str(_PP) if _PP else None

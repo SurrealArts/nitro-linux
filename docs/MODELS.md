@@ -1,6 +1,6 @@
 # Supported models
 
-**As of v2.3.4, only one configuration is verified:**
+**As of v2.3.5, only one configuration is verified:**
 
 | Model    | Board     | BIOS  | Status       | Notes                                                                                                              |
 | -------- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
