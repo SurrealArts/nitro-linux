@@ -166,8 +166,24 @@ mok_cert() {
   printf '%s\n' /var/lib/dkms/mok.pub
 }
 
+sb_key_state() {
+  # mokutil's exit status is not an "is enrolled" signal: 0 means the key can
+  # still be enrolled, 1 means it is already present or blocked, and -1 means
+  # the file could not be tested. Read the message instead, which is stable.
+  local out
+  out=$(mokutil --test-key "$1" 2>&1) || true
+  case "$out" in
+    *"already in the enrollment request"*) printf 'pending\n' ;;
+    *"blocked in"*) printf 'blocked\n' ;;
+    *"already in db"*|*"is already enrolled"*) printf 'enrolled\n' ;;
+    *"already in the built-in trusted keyring"*) printf 'trusted\n' ;;
+    *"is not enrolled"*) printf 'not-enrolled\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
 preflight_sb() {
-  local cert
+  local cert state
   secure_boot_on || return 0
   echo "[!] Secure Boot is ON."
   cert="$(mok_cert)"
@@ -194,17 +210,45 @@ preflight_sb() {
     echo "Signing the module yourself? Use: sudo bash deploy/install.sh --manual-module"
     return 1
   fi
-  if mokutil --test-key "$cert" >/dev/null 2>&1; then
-    echo "[*] signing key $cert is enrolled, continuing."
-    return 0
-  fi
-  echo "The signing key $cert is not enrolled. Enroll it, then re-run:"
-  echo "  sudo mokutil --import $cert"
-  echo "Reboot, confirm enrollment in MokManager, then re-run this script."
-  echo "Signing the module yourself? Use: sudo bash deploy/install.sh --manual-module"
-  return 1
+  state="$(sb_key_state "$cert")"
+  case "$state" in
+    enrolled)
+      echo "[*] signing key $cert is enrolled, continuing."
+      return 0
+      ;;
+    trusted)
+      echo "[*] signing key $cert is in the kernel trusted keyring, continuing."
+      return 0
+      ;;
+    pending)
+      echo "Enrollment of $cert is already queued but not active."
+      echo "Reboot, confirm it in MokManager, then re-run this script."
+      return 1
+      ;;
+    blocked)
+      echo "$cert is blocked by the firmware (dbx/MokListX). Remove the block first."
+      return 1
+      ;;
+    not-enrolled)
+      echo "The signing key $cert is not enrolled. Enroll it, then re-run:"
+      echo "  sudo mokutil --import $cert"
+      echo "Reboot, confirm enrollment in MokManager, then re-run this script."
+      echo "Signing the module yourself? Use: sudo bash deploy/install.sh --manual-module"
+      return 1
+      ;;
+    *)
+      echo "[!] could not read the enrollment state of $cert; continuing." >&2
+      echo "    check it with: mokutil --test-key $cert" >&2
+      return 0
+      ;;
+  esac
 }
 if [ "$MANUAL_MODULE" -eq 0 ]; then
+  if ! command -v dkms >/dev/null 2>&1; then
+    echo "[!] dkms is not installed; it builds and signs the module for each kernel." >&2
+    echo "    install dkms and the headers for $(uname -r), or use --manual-module." >&2
+    exit 1
+  fi
   preflight_sb
   VER=$(grep PACKAGE_VERSION dkms.conf | cut -d'"' -f2)
 else
@@ -235,7 +279,8 @@ if [ "$MANUAL_MODULE" -eq 1 ]; then
         echo "    $VER is loaded now, but the next boot would pick $MODULE_VER." >&2
       fi
     fi
-    echo "    install the matching module for $(uname -r) before using --manual-module." >&2
+    echo "    rebuild it from this checkout for $(uname -r), install it in /lib/modules" >&2
+    echo "    (depmod -a), then retry --manual-module. Sign it again if Secure Boot is on." >&2
     exit 1
   fi
   echo "[*] manual module mode: skipping the DKMS Secure Boot preflight"
