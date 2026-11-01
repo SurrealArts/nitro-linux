@@ -46,7 +46,7 @@ sudo bash deploy/install.sh
 sudo bash deploy/uninstall.sh
 ```
 
-If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. Before changing the userspace tree it checks the installed module's version against this checkout and aborts on a mismatch; after loading it checks `/sys/module/nitro/version` again. **Only do this when you know what you are doing!**
+If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS, the DKMS Secure Boot preflight, and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. Before changing the userspace tree it checks the installed module's version against this checkout and aborts on a mismatch; after loading it checks `/sys/module/nitro/version` again. Your signature is your responsibility in this mode. **Only do this when you know what you are doing!**
 
 ## Use
 
@@ -171,6 +171,8 @@ sudo openssl req -new -x509 -newkey rsa:2048 \
   -out /var/lib/dkms/mok.pub -nodes -days 36500 \
   -subj '/CN=DKMS module signing key/'
 ```
+
+`deploy/install.sh` checks the certificate DKMS is configured to sign with: `mok_certificate` from `dkms.conf` or `/etc/dkms/framework.conf`, otherwise `/var/lib/dkms/mok.pub`. Pass `--mok-cert PATH` when you sign with a certificate at a different path. A key that is enrolled but configured elsewhere is therefore accepted, and signing the module yourself only needs `--manual-module`.
 
 ## Dependencies
 

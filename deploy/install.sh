@@ -3,13 +3,16 @@ set -e
 cd "$(dirname "$0")/.."
 
 MANUAL_MODULE=0
+MOK_CERT_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
-usage: sudo bash deploy/install.sh [--manual-module]
+usage: sudo bash deploy/install.sh [--manual-module] [--mok-cert PATH]
 
   --manual-module   skip DKMS; install the userspace tools and services only.
                     Use this when you built and signed the kernel module yourself.
+  --mok-cert PATH   certificate Secure Boot should have enrolled, when it is not
+                    the one DKMS is configured with.
   -h, --help        show this help
 EOF
 }
@@ -17,6 +20,14 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --manual-module) MANUAL_MODULE=1 ;;
+    --mok-cert)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "[!] --mok-cert needs a path" >&2
+        exit 2
+      fi
+      MOK_CERT_OVERRIDE="$1"
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "[!] unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -127,34 +138,70 @@ auto_key() {
   echo "[!] Nitro key: setup incomplete; run 'nitro key auto' as $u to finish."
 }
 
-preflight_sb() {
-  # For Secure Boot systems
-  local efivar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
-  local val="" pub=/var/lib/dkms/mok.pub key=/var/lib/dkms/mok.key
+secure_boot_on() {
+  # The SecureBoot efivar is 5 bytes; the last one is 1 when enforcement is on.
+  local efivar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c val=""
   [ -r "$efivar" ] && val=$(od -An -tu1 "$efivar" 2>/dev/null | awk '{print $NF}')
-  [ "$val" != "1" ] && return 0
-  echo "[!] Secure Boot is ON."
-  if ! command -v mokutil >/dev/null; then
-    echo "Install mokutil, then enroll the DKMS key so the module loads:"
-    echo "  sudo pacman -S mokutil"
-    echo "  sudo mokutil --import $pub"
-    echo "Reboot, confirm enrollment in MokManager, then re-run this script."
-    return 1
-  fi
-  if [ ! -f "$key" ] || [ ! -f "$pub" ]; then
-    echo "No DKMS signing key found. Create one, enroll it, then re-run:"
-    echo "  sudo openssl req -new -x509 -newkey rsa:2048 -keyout $key -outform DER -out $pub -nodes -days 36500 -subj '/CN=DKMS module signing key/'"
-    echo "  sudo mokutil --import $pub"
-    echo "Reboot, confirm enrollment in MokManager, then re-run this script."
-    return 1
-  fi
-  if mokutil --test-key "$pub" >/dev/null 2>&1; then
-    echo "[*] DKMS key is enrolled, continuing."
+  [ "$val" = "1" ]
+}
+
+mok_cert() {
+  # DKMS signs with whatever key it is configured with, not necessarily the
+  # conventional /var/lib/dkms pair. Honour an explicit override, then the
+  # mok_certificate setting from dkms.conf or the DKMS framework config.
+  local conf cert
+  if [ -n "${MOK_CERT_OVERRIDE:-${NITRO_MOK_CERT:-}}" ]; then
+    printf '%s\n' "${MOK_CERT_OVERRIDE:-${NITRO_MOK_CERT:-}}"
     return 0
   fi
-  echo "The DKMS key is not enrolled. Enroll it, then re-run:"
-  echo "  sudo mokutil --import $pub"
+  for conf in dkms.conf "${NITRO_DKMS_CONF:-/etc/dkms/framework.conf}"; do
+    [ -r "$conf" ] || continue
+    cert=$(sed -n 's/^[[:space:]]*mok_certificate[[:space:]]*=[[:space:]]*//p' "$conf" | tail -n 1)
+    cert="${cert%\"}"; cert="${cert#\"}"; cert="${cert%\'}"; cert="${cert#\'}"
+    if [ -n "$cert" ]; then
+      printf '%s\n' "$cert"
+      return 0
+    fi
+  done
+  printf '%s\n' /var/lib/dkms/mok.pub
+}
+
+preflight_sb() {
+  local cert
+  secure_boot_on || return 0
+  echo "[!] Secure Boot is ON."
+  cert="$(mok_cert)"
+  if ! command -v mokutil >/dev/null; then
+    echo "Install mokutil, then enroll the signing key so the module loads:"
+    echo "  sudo pacman -S mokutil"
+    echo "  sudo mokutil --import $cert"
+    echo "Reboot, confirm enrollment in MokManager, then re-run this script."
+    return 1
+  fi
+  if [ ! -f "$cert" ]; then
+    echo "No signing certificate at $cert."
+    if [ "$cert" = /var/lib/dkms/mok.pub ]; then
+      echo "Create the DKMS keypair, then re-run:"
+      echo "  sudo openssl req -new -x509 -newkey rsa:2048 -keyout /var/lib/dkms/mok.key \\"
+      echo "    -outform DER -out $cert -nodes -days 36500 \\"
+      echo "    -subj '/CN=DKMS module signing key/'"
+    else
+      echo "Point --mok-cert or mok_certificate in dkms.conf at the certificate you sign with,"
+      echo "or create a keypair at that path."
+    fi
+    echo "Then enroll it and reboot:"
+    echo "  sudo mokutil --import $cert"
+    echo "Signing the module yourself? Use: sudo bash deploy/install.sh --manual-module"
+    return 1
+  fi
+  if mokutil --test-key "$cert" >/dev/null 2>&1; then
+    echo "[*] signing key $cert is enrolled, continuing."
+    return 0
+  fi
+  echo "The signing key $cert is not enrolled. Enroll it, then re-run:"
+  echo "  sudo mokutil --import $cert"
   echo "Reboot, confirm enrollment in MokManager, then re-run this script."
+  echo "Signing the module yourself? Use: sudo bash deploy/install.sh --manual-module"
   return 1
 }
 if [ "$MANUAL_MODULE" -eq 0 ]; then
@@ -168,19 +215,34 @@ if ! [[ $VER =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 echo "[*] version $VER"
+PRELOADED_VER=""
 if [ "$MANUAL_MODULE" -eq 1 ]; then
   MODULE_VER=$(modinfo -F version nitro 2>/dev/null || true)
+  PRELOADED_VER=$(cat /sys/module/nitro/version 2>/dev/null || true)
+  # A module loaded with insmod need not be installed in the module tree yet.
+  [ -n "$MODULE_VER" ] || MODULE_VER=$PRELOADED_VER
   if [ -z "$MODULE_VER" ]; then
-    echo "[!] no nitro module found for $(uname -r) in the module tree" >&2
-    echo "    build and install the module for the running kernel first." >&2
+    echo "[!] no nitro module for $(uname -r): not in the module tree and not loaded" >&2
+    echo "    build and install (or insmod) the module for the running kernel first." >&2
     exit 1
   fi
   if [ "$MODULE_VER" != "$VER" ]; then
-    echo "[!] installed nitro module is $MODULE_VER, expected $VER" >&2
-    echo "    build/install the matching module before using --manual-module." >&2
+    if [ "$PRELOADED_VER" = "$MODULE_VER" ]; then
+      echo "[!] loaded nitro is $MODULE_VER, expected $VER" >&2
+    else
+      echo "[!] nitro in the $(uname -r) module tree is $MODULE_VER, expected $VER" >&2
+      if [ "$PRELOADED_VER" = "$VER" ]; then
+        echo "    $VER is loaded now, but the next boot would pick $MODULE_VER." >&2
+      fi
+    fi
+    echo "    install the matching module for $(uname -r) before using --manual-module." >&2
     exit 1
   fi
-  echo "[*] manual module mode: Secure Boot signing is your responsibility"
+  echo "[*] manual module mode: skipping the DKMS Secure Boot preflight"
+  if secure_boot_on; then
+    echo "    Secure Boot is ON: only an enrolled key can load the module."
+    echo "    verify yours with: mokutil --test-key <certificate.pub>"
+  fi
 fi
 if [ "$MANUAL_MODULE" -eq 0 ]; then
   SRC=/usr/src/nitro-$VER
@@ -226,15 +288,30 @@ tighten_state
 add_user_nitro
 systemctl daemon-reload
 systemctl stop nitrod.service 2>/dev/null || true
-echo "[*] load"
-rmmod nitro 2>/dev/null || true
-sleep 1
-modprobe led-class-multicolor 2>/dev/null || true
-if [ "$MANUAL_MODULE" -eq 1 ]; then
-  depmod -a "$(uname -r)" 2>/dev/null || true
-  echo "[*] manual module mode: loading $(uname -r) module via modprobe"
+if [ "$MANUAL_MODULE" -eq 1 ] && [ "$PRELOADED_VER" = "$VER" ]; then
+  echo "[*] load: nitro $VER is already loaded, keeping it"
+else
+  echo "[*] load"
+  rmmod nitro 2>/dev/null || true
+  sleep 1
+  modprobe led-class-multicolor 2>/dev/null || true
+  if [ "$MANUAL_MODULE" -eq 1 ]; then
+    depmod -a "$(uname -r)" 2>/dev/null || true
+    echo "[*] manual module mode: loading $(uname -r) module via modprobe"
+  fi
+  modprobe nitro || {
+    dmesg | tail -5
+    echo "[!] modprobe failed." >&2
+    if secure_boot_on; then
+      if [ "$MANUAL_MODULE" -eq 1 ]; then
+        echo "    Secure Boot is ON: the key that signed your module must be enrolled (mokutil --import), then reboot." >&2
+      else
+        echo "    Secure Boot is ON: enroll the signing key $(mok_cert) and reboot." >&2
+      fi
+    fi
+    exit 1
+  }
 fi
-modprobe nitro || { dmesg | tail -5; echo "[!] modprobe failed. If Secure Boot is on, the signing key must be enrolled (see Secure Boot below)."; exit 1; }
 LOADED_VER=$(cat /sys/module/nitro/version 2>/dev/null || true)
 if [ -z "$LOADED_VER" ]; then
   LOADED_VER=$(modinfo -F version nitro 2>/dev/null || true)
