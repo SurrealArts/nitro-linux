@@ -119,21 +119,22 @@ stop_daemon() {
   local pid tries=0
   systemctl stop nitrod.service 2>/dev/null || true
   [ -f /run/nitro.sock.lock ] || return 0
-  pid=$(tr -dc '0-9' < /run/nitro.sock.lock)
+  pid=$(head -n 1 /run/nitro.sock.lock 2>/dev/null | tr -dc '0-9')
   [ -n "$pid" ] || return 0
   kill -0 "$pid" 2>/dev/null || return 0
   grep -qs nitrod "/proc/$pid/cmdline" 2>/dev/null || return 0
   echo "[*] stopping leftover nitrod (pid $pid)"
+  ps -o pid=,lstart=,cmd= -p "$pid" 2>/dev/null || true
   kill "$pid" 2>/dev/null || true
   while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 5 ]; do
     sleep 1
     tries=$((tries + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
+    echo "[*] nitrod (pid $pid) ignored SIGTERM, sending SIGKILL"
     kill -9 "$pid" 2>/dev/null || true
     sleep 1
   fi
-  rm -f /run/nitro.sock /run/nitro.sock.lock
 }
 
 auto_key() {
@@ -428,9 +429,17 @@ sleep 1
 echo "[*] enable and start services"
 systemctl enable nitro-apply.service nitrod.service
 systemctl restart nitro-apply.service 2>/dev/null || true
+stop_daemon
+systemctl reset-failed nitrod.service 2>/dev/null || true
 systemctl restart nitrod.service 2>/dev/null || true
 if [ -d /run/systemd/system ]; then
   sleep 1
+  if ! systemctl is-active --quiet nitrod.service; then
+    stop_daemon
+    systemctl reset-failed nitrod.service 2>/dev/null || true
+    systemctl restart nitrod.service 2>/dev/null || true
+    sleep 1
+  fi
   if ! systemctl is-active --quiet nitrod.service; then
     echo "[!] nitrod.service failed to start" >&2
     systemctl --no-pager --full status nitrod.service 2>/dev/null | tail -12 || true

@@ -2,6 +2,8 @@
 Description=nitro daemon (keyboard effects, thermal polling)
 After=systemd-modules-load.service nitro-apply.service
 ConditionPathExists=/sys/devices/platform/nitro
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
