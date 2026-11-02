@@ -12,6 +12,46 @@ Minimum terminal size: **120x45**
 - [Contributing a model report](docs/CONTRIBUTING.md)
 - [Reverse-engineering notes](docs/REVERSE.md)
 
+## Secure Boot (Pre-install)
+
+> Scroll down further for the actual installation guide.
+
+Enroll the DKMS key once before installing:
+
+```bash
+sudo pacman -S mokutil
+sudo mokutil --import /var/lib/dkms/mok.pub
+```
+
+If no keypair exists:
+
+```bash
+sudo openssl req -new -x509 -newkey rsa:2048 \
+  -keyout /var/lib/dkms/mok.key -outform DER \
+  -out /var/lib/dkms/mok.pub -nodes -days 36500 \
+  -subj '/CN=DKMS module signing key/'
+```
+
+`deploy/install.sh` checks the certificate DKMS is configured to sign with: `mok_certificate` from `dkms.conf` or `/etc/dkms/framework.conf`, otherwise `/var/lib/dkms/mok.pub`. Pass `--mok-cert PATH` when you sign with a certificate at a different path. A key that is enrolled but configured elsewhere is therefore accepted, and signing the module yourself only needs `--manual-module`.
+
+## Dependencies
+
+Package: `python`, `dkms`, `systemd`, `acl` (for per-user socket access)
+
+- optional: `nvidia-utils`
+
+Source build: `linux-headers`, `dkms`, `make`, `gcc`, `sudo`
+
+- secure boot: `mokutil` + `openssl`
+
+Runtime: Python 3.9+ (tested on 3.9 and 3.13), `nvidia-smi` for GPU sensors
+
+## Notes
+
+- EC via WMI GUID `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56` (`WMBH`); see [REVERSE](docs/REVERSE.md).
+- Unload restores the previous fan/policy/lighting/timeout state.
+- Kernel logs: `journalctl -k | grep nitro` or `sudo dmesg | grep nitro`.
+
 ## Install
 
 ### Package
@@ -116,7 +156,8 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 
 ### Persistent files and installed controls
 
-#### Configuration and state
+<details>
+<summary>Configuration and state</summary>
 
 - `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, keyboard timeout, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
 - `/etc/modules-load.d/nitro.conf`: loads the `nitro` kernel module at boot; removed on uninstall.
@@ -127,21 +168,30 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `~/.config/autostart/nitro-key.desktop`: XDG fallback that starts `nitro key listen` at login when systemd user services are unavailable; removed on uninstall.
 - `/run/nitro.sock`: runtime Unix socket for `nitrod`; owned `root:nitro` mode `660`; not persistent. Add your user with `sudo usermod -aG nitro "$USER"`, then log out and back in.
 
-#### Services
+</details>
+
+<details>
+<summary>Services</summary>
 
 - `nitro-apply.service`: oneshot boot service that runs `nitro-apply`; package `/usr/lib/systemd/system/nitro-apply.service`, source `/etc/systemd/system/nitro-apply.service`.
 - `nitrod.service`: daemon that owns `/var/lib/nitro/state.json`, `/var/lib/nitro/history.db`, and `/run/nitro.sock`; package `/usr/lib/systemd/system/nitrod.service`, source `/etc/systemd/system/nitrod.service`.
 - `nitro-key.service`: user listener started at login; package `/usr/lib/systemd/user/nitro-key.service`, source `/usr/local/lib/systemd/user/nitro-key.service`.
 - `/etc/systemd/system/multi-user.target.wants/nitro-apply.service`, `/etc/systemd/system/multi-user.target.wants/nitrod.service`, and `~/.config/systemd/user/default.target.wants/nitro-key.service`: enablement symlinks created by `systemctl enable`; removed on uninstall.
 
-#### Installed commands
+</details>
+
+<details>
+<summary>Installed commands</summary>
 
 - `nitro`: CLI; package `/usr/bin/nitro`, source `/usr/local/bin/nitro`.
 - `nitro-linux`: TUI; package `/usr/bin/nitro-linux`, source `/usr/local/bin/nitro-linux`.
 - `nitrod`: daemon; package `/usr/bin/nitrod`, source `/usr/local/bin/nitrod`.
 - `nitro-apply`: applies `/etc/nitro.conf`; package `/usr/bin/nitro-apply`, source `/usr/local/bin/nitro-apply`.
 
-#### Kernel, sensors, LEDs, and profiles
+</details>
+
+<details>
+<summary>Kernel, sensors, LEDs, and profiles</summary>
 
 - `nitro` kernel module: `/usr/lib/modules/<kernel>/updates/dkms/nitro.ko.zst`; DKMS source `/usr/src/nitro-<version>/`, build state `/var/lib/dkms/nitro/<version>/`.
 - `/sys/devices/platform/nitro/`: direct sysfs controls and readings, including `capabilities`, `fan_cpu`, `fan_gpu`, `fan_mode`, `coolboost`, `kbd_timeout`, `kbd_bright`, `kbd_static`, `kbd_dynamic`, `kbd_zone1`, `ec_cpu_temp`, `ftbl`, `tkst`, `opms`, and `wmi_raw`.
@@ -151,48 +201,15 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `/sys/class/power_supply/*/online`: AC/battery state that selects `profile_ac` or `profile_battery`.
 - `/dev/input/by-path/platform-i8042-serio-0-event-kbd`: keyboard event device used by `nitro key`.
 
-#### Package assets
+</details>
+
+<details>
+<summary>Package assets</summary>
 
 - `/usr/share/nitro-linux/nitro.conf`: default config copied to `/etc/nitro.conf` only if absent.
 - `/usr/share/licenses/nitro-linux/LICENSE`: package license.
 
-## Secure Boot
-
-Enroll the DKMS key once before installing:
-
-```bash
-sudo pacman -S mokutil
-sudo mokutil --import /var/lib/dkms/mok.pub
-```
-
-If no keypair exists:
-
-```bash
-sudo openssl req -new -x509 -newkey rsa:2048 \
-  -keyout /var/lib/dkms/mok.key -outform DER \
-  -out /var/lib/dkms/mok.pub -nodes -days 36500 \
-  -subj '/CN=DKMS module signing key/'
-```
-
-`deploy/install.sh` checks the certificate DKMS is configured to sign with: `mok_certificate` from `dkms.conf` or `/etc/dkms/framework.conf`, otherwise `/var/lib/dkms/mok.pub`. Pass `--mok-cert PATH` when you sign with a certificate at a different path. A key that is enrolled but configured elsewhere is therefore accepted, and signing the module yourself only needs `--manual-module`.
-
-## Dependencies
-
-Package: `python`, `dkms`, `systemd`, `acl` (for per-user socket access)
-
-- optional: `nvidia-utils`
-
-Source build: `linux-headers`, `dkms`, `make`, `gcc`, `sudo`
-
-- secure boot: `mokutil` + `openssl`
-
-Runtime: Python 3.9+ (tested on 3.9 and 3.13), `nvidia-smi` for GPU sensors
-
-## Notes
-
-- EC via WMI GUID `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56` (`WMBH`); see [REVERSE](docs/REVERSE.md).
-- Unload restores the previous fan/policy/lighting/timeout state.
-- Kernel logs: `journalctl -k | grep nitro` or `sudo dmesg | grep nitro`.
+</details>
 
 ## License
 
