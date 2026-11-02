@@ -2,7 +2,12 @@
 /*
  * nitro - Acer Nitro WMI driver
  *
- * Targets: Acer Nitro family; verified model: AN515-57 (Scala_TLS), BIOS V1.22.
+ * Targets: Acer Nitro family;
+ *   verified models:
+ *     - AN515-57 (Scala_TLS)
+ *     - AN515-45 (Scala_CAS)
+ *   probe candidate models:
+ *     - AN515-58 (Jimny_ADH)
  *
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
  * Restores initial fan/RGB/FTBL/CoolBoost on unload. See docs/REVERSE.md.
@@ -157,16 +162,16 @@ static const struct nitro_quirks nitro_quirks_an515_58_probe = {
 	.tested_bios = "V2.21",
 };
 
-static const struct nitro_quirks nitro_quirks_an515_45_probe = {
-	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
-			NITRO_CAP_HWMON | NITRO_CAP_RGB,
+static const struct nitro_quirks nitro_quirks_an515_45 = {
+	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON |
+			NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB |
+			NITRO_CAP_RGB_DYNAMIC | NITRO_CAP_LED_CLASS |
+			NITRO_CAP_KBD_TIMEOUT,
 	.rgb_zones = 4,
-	.dynamic_effects = 0,
-	.profile_backend = NITRO_PROFILE_NONE,
+	.dynamic_effects = 5,
+	.profile_backend = NITRO_PROFILE_FTBL,
 	.coolboost_backend = NITRO_COOLBOOST_NONE,
 	.fan_count = 2,
-	/* GET_MISC selectors 1 (TKST) and 0x0B (OPMS) return a non-zero
-	 * status on Scala_CAS, so both attributes stay hidden. */
 	.has_misc = false,
 	.board = "Scala_CAS",
 	.tested_bios = "V1.14",
@@ -397,6 +402,9 @@ struct nitro_device {
 	u8 wmi_raw_out[16];
 	size_t wmi_raw_out_len;
 	int wmi_raw_status;
+	u8 ec_raw_reg;
+	u8 ec_raw_val;
+	int ec_raw_status;
 };
 
 static const u8 nitro_zone_ids[NITRO_MAX_ZONES] = { 0x01, 0x02, 0x04, 0x08 };
@@ -1661,6 +1669,54 @@ static ssize_t wmi_raw_store(
 }
 static DEVICE_ATTR(wmi_raw, 0600, wmi_raw_show, wmi_raw_store);
 
+static ssize_t ec_raw_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	u8 val = 0;
+	int ret;
+
+	if (!nitro)
+		return -ENODEV;
+	mutex_lock(&nitro->lock);
+	ret = nitro_ec_read(nitro->ec_raw_reg, &val);
+	nitro->ec_raw_val = val;
+	nitro->ec_raw_status = ret;
+	mutex_unlock(&nitro->lock);
+	if (ret)
+		return sysfs_emit(buf, "status=%d reg=0x%02x\n", ret, nitro->ec_raw_reg);
+	return sysfs_emit(buf, "status=0 reg=0x%02x val=0x%02x (%u)\n",
+		nitro->ec_raw_reg, val, val);
+}
+
+static ssize_t ec_raw_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	unsigned int reg;
+	int ret;
+
+	if (!nitro)
+		return -ENODEV;
+	if (count > NITRO_INPUT_MAX)
+		return -EINVAL;
+	ret = kstrtouint(buf, 0, &reg);
+	if (ret)
+		return ret;
+	if (reg > 0xFF)
+		return -ERANGE;
+	mutex_lock(&nitro->lock);
+	nitro->ec_raw_reg = (u8)reg;
+	mutex_unlock(&nitro->lock);
+	return count;
+}
+static DEVICE_ATTR(ec_raw, 0600, ec_raw_show, ec_raw_store);
+
 static ssize_t kbd_dynamic_show(
 	struct device *dev,
 	struct device_attribute *attr,
@@ -2162,11 +2218,11 @@ static umode_t nitro_attr_is_visible(
 	if (!strcmp(attr->name, "capabilities"))
 		return mode;
 	/*
-	 * wmi_raw intentionally bypasses the probe-mode write mask: the store
-	 * handler rejects every non-read method in probe mode, and probing needs
-	 * to issue read methods through this file.
+	 * wmi_raw and ec_raw intentionally bypass the probe-mode write mask:
+	 * wmi_raw restricts methods internally, and ec_raw store only selects
+	 * the register index for read without performing any hardware EC write.
 	 */
-	if (!strcmp(attr->name, "wmi_raw"))
+	if (!strcmp(attr->name, "wmi_raw") || !strcmp(attr->name, "ec_raw"))
 		return mode;
 
 	if (!strcmp(attr->name, "fan_cpu")) {
@@ -2238,6 +2294,7 @@ static struct attribute *nitro_attrs[] = {
 	&dev_attr_kbd_bright.attr,
 	&dev_attr_ec_cpu_temp.attr,
 	&dev_attr_wmi_raw.attr,
+	&dev_attr_ec_raw.attr,
 	NULL,
 };
 
@@ -2261,6 +2318,14 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 		},
 		.driver_data = (void *)&nitro_quirks_an515_57,
 	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-45"),
+			DMI_MATCH(DMI_BOARD_NAME, "Scala_CAS"),
+		},
+		.driver_data = (void *)&nitro_quirks_an515_45,
+	},
 	{}
 };
 MODULE_DEVICE_TABLE(dmi, nitro_dmi);
@@ -2279,14 +2344,6 @@ static const struct dmi_system_id nitro_probe_dmi[] __initconst = {
 			DMI_MATCH(DMI_BOARD_NAME, "Jimny_ADH"),
 		},
 		.driver_data = (void *)&nitro_quirks_an515_58_probe,
-	},
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-45"),
-			DMI_MATCH(DMI_BOARD_NAME, "Scala_CAS"),
-		},
-		.driver_data = (void *)&nitro_quirks_an515_45_probe,
 	},
 	{}
 };

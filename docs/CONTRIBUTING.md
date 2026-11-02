@@ -1,6 +1,6 @@
 # Contributing a model report
 
-This project supports **one verified model** (AN515-57 / Scala_TLS / BIOS V1.22).
+This project supports verified models: **AN515-57** (Scala_TLS / BIOS V1.22) and **AN515-45** (Scala_CAS / BIOS V1.14).
 Adding another model is not a config change — it requires evidence and code.
 
 If you want your Nitro/Predator supported, the most valuable thing you can do
@@ -38,7 +38,6 @@ A candidate probe entry is added only after a Model Support Report is triaged, a
 | Product        | Board     | BIOS  | Probe reads                                   |
 | -------------- | --------- | ----- | --------------------------------------------- |
 | Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
-| Nitro AN515-45 | Scala_CAS | V1.14 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
 
 If your model is in the table, load the module in read-only mode. The source
 installer does that in one step and keeps it that way across reboots:

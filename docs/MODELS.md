@@ -1,10 +1,11 @@
 # Supported models
 
-**As of v2.3.5, only one configuration is verified:**
+**As of v2.3.5, verified configurations:**
 
 | Model    | Board     | BIOS  | Status       | Notes                                                                                                              |
 | -------- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
 | AN515-57 | Scala_TLS | V1.22 | **Verified** | All features: fan, profile, 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10), 30-sec keyboard timeout (WMI APGE) |
+| AN515-45 | Scala_CAS | V1.14 | **Verified** | Verified features: fan, fan mode, profile (FTBL), 4-zone RGB, 5 dynamic effects, 30-sec keyboard timeout (WMI APGE). CoolBoost withheld (unverified EC offset). has_misc=false |
 
 ---
 
@@ -15,14 +16,13 @@ A probe entry is added only after a [Model Support Report](https://github.com/Su
 | Product        | Board     | BIOS  | Probe entry                                                        | Status        |
 | -------------- | --------- | ----- | ------------------------------------------------------------------ | ------------- |
 | Nitro AN515-58 | Jimny_ADH | V2.21 | `nitro_quirks_an515_58_probe`: fan=2, fan_mode, ec_cpu_temp, rgb=4 | probe shipped |
-| Nitro AN515-45 | Scala_CAS | V1.14 | `nitro_quirks_an515_45_probe`: fan=2, fan_mode, ec_cpu_temp, rgb=4 | probe shipped |
 
 ### Probe scope
 
 These entries are a **hypothesis about which reads to attempt**.
 
 - **AN515-58** is the closest sibling of the verified AN515-57 and the board has two fan tachos (also exposed by the in-tree `acer-wmi` hwmon); the probe reads fan state and `ec_cpu_temp` through nitro's WMI/sysfs path. Static RGB is probed at four zones; `dyn` is withheld until `0x15` returns a sane payload on this board. `profile`, `coolboost`, `kbd_timeout`, and `led` stay off: the platform profile is currently owned by `acer-wmi`, CoolBoost needs direct EC evidence on _this_ board, and the keyboard timeout needs the APGE GET/SET round trip (with the matching EC `0x06` byte) on _this_ board.
-- **AN515-45** ([issue #2](https://github.com/SurrealArts/nitro-linux/issues/2)) shares the Nitro 5 EC/WMI family and its reporter says the full feature set worked after a local DMI patch. That is not recorded 10-step evidence, and CoolBoost still has no EC reading on this board, so it ships as the same read-only probe hypothesis until the verification sequence is complete. Its EC rejects `GET_MISC` selectors `1` (TKST) and `0x0B` (OPMS) with a non-zero status, so `has_misc` is off for this entry and neither attribute is exposed.
+- **AN515-45** ([issue #2](https://github.com/SurrealArts/nitro-linux/issues/2)) shares the Nitro 5 EC/WMI family. Verified with live hardware evidence across fans, fan modes, FTBL platform profile, 4-zone RGB, 5 dynamic effects, and APGE keyboard timeout. CoolBoost is withheld until direct EC register evidence is recorded on this board. Method `0x17` (`GET_MISC`) is unsupported across all selectors on Scala_CAS, so `has_misc` is disabled.
 
 Escalating a probe entry (for example enabling `dyn`) requires the previous probe output, for CoolBoost direct EC evidence, and for the keyboard timeout the APGE GET replies, on that board.
 
