@@ -1167,7 +1167,12 @@ def key_find(args):
 
 
 def default_key_command():
-    exe = shutil.which("nitro-linux") or "nitro-linux"
+    for p in ("/usr/local/bin/nitro-linux", "/usr/bin/nitro-linux"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            exe = p
+            break
+    else:
+        exe = shutil.which("nitro-linux") or "nitro-linux"
     quoted = shlex.quote(exe)
     terminal = shutil.which("xdg-terminal-exec")
     if terminal:

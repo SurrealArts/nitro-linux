@@ -452,8 +452,10 @@ if [ "$MANUAL_MODULE" -eq 0 ]; then
   echo "[*] rebuild initramfs (bake current nitro, purge stale copies)"
   if command -v dracut-rebuild >/dev/null 2>&1; then
     dracut-rebuild
+  elif command -v dracut >/dev/null 2>&1; then
+    dracut -f --kver "$(uname -r)" 2>/dev/null || dracut --regenerate-all --force 2>/dev/null || echo "[!] dracut failed; rebuild initramfs manually"
   else
-    echo "[!] dracut-rebuild not found: rebuild your initramfs manually"
+    echo "[!] dracut not found: rebuild your initramfs manually"
   fi
 else
   echo "[*] manual module mode: skipping initramfs rebuild"
