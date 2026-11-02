@@ -115,6 +115,27 @@ run_as_user() {
   fi
 }
 
+stop_daemon() {
+  local pid tries=0
+  systemctl stop nitrod.service 2>/dev/null || true
+  [ -f /run/nitro.sock.lock ] || return 0
+  pid=$(tr -dc '0-9' < /run/nitro.sock.lock)
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  grep -qs nitrod "/proc/$pid/cmdline" 2>/dev/null || return 0
+  echo "[*] stopping leftover nitrod (pid $pid)"
+  kill "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 5 ]; do
+    sleep 1
+    tries=$((tries + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f /run/nitro.sock /run/nitro.sock.lock
+}
+
 auto_key() {
   local u uid home
   if ! u="$(invoking_user)"; then
@@ -347,7 +368,7 @@ fi
 tighten_state
 add_user_nitro
 systemctl daemon-reload
-systemctl stop nitrod.service 2>/dev/null || true
+stop_daemon
 if [ "$MANUAL_MODULE" -eq 1 ] && [ "$PRELOADED_VER" = "$VER" ]; then
   echo "[*] load: nitro $VER is already loaded, keeping it"
 else
@@ -412,7 +433,8 @@ if [ -d /run/systemd/system ]; then
   sleep 1
   if ! systemctl is-active --quiet nitrod.service; then
     echo "[!] nitrod.service failed to start" >&2
-    systemctl --no-pager --full status nitrod.service 2>/dev/null | tail -20 || true
+    systemctl --no-pager --full status nitrod.service 2>/dev/null | tail -12 || true
+    journalctl -u nitrod.service -n 20 --no-pager 2>/dev/null || true
     echo "    inspect: journalctl -u nitrod.service" >&2
     exit 1
   fi

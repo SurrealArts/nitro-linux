@@ -165,7 +165,9 @@ static const struct nitro_quirks nitro_quirks_an515_45_probe = {
 	.profile_backend = NITRO_PROFILE_NONE,
 	.coolboost_backend = NITRO_COOLBOOST_NONE,
 	.fan_count = 2,
-	.has_misc = true,
+	/* GET_MISC selectors 1 (TKST) and 0x0B (OPMS) return a non-zero
+	 * status on Scala_CAS, so both attributes stay hidden. */
+	.has_misc = false,
 	.board = "Scala_CAS",
 	.tested_bios = "V1.14",
 };
@@ -2512,19 +2514,23 @@ static int __init nitro_init(void)
 	nitro_log_state(nitro);
 	mutex_unlock(&nitro->lock);
 
-	if (!nitro->probe_mode) {
-		if (nitro_has_cap(nitro, NITRO_CAP_HWMON)) {
-			hwmon = devm_hwmon_device_register_with_info(
-				&nitro_pdev->dev,
-				"nitro", nitro,
-				&nitro_hwmon_chip, NULL);
-			if (IS_ERR(hwmon)) {
-				ret = PTR_ERR(hwmon);
-				pr_warn("hwmon register failed %d; continuing without hwmon\n", ret);
-				nitro->capabilities &= ~NITRO_CAP_HWMON;
-			}
+	/*
+	 * hwmon only exposes read attributes (0444), so probe mode can register
+	 * it too; that is where the fan tachos and the EC temperature come from.
+	 */
+	if (nitro_has_cap(nitro, NITRO_CAP_HWMON)) {
+		hwmon = devm_hwmon_device_register_with_info(
+			&nitro_pdev->dev,
+			"nitro", nitro,
+			&nitro_hwmon_chip, NULL);
+		if (IS_ERR(hwmon)) {
+			ret = PTR_ERR(hwmon);
+			pr_warn("hwmon register failed %d; continuing without hwmon\n", ret);
+			nitro->capabilities &= ~NITRO_CAP_HWMON;
 		}
+	}
 
+	if (!nitro->probe_mode) {
 		ret = nitro_leds_register(&nitro_pdev->dev, nitro);
 		if (ret) {
 			pr_warn("led register failed %d; continuing without led class\n", ret);
@@ -2550,11 +2556,6 @@ static int __init nitro_init(void)
 	if (ret)
 		goto err_pdev;
 
-	if (nitro->probe_mode) {
-		pr_info("probe mode: writes disabled, wmi_raw limited to read-only methods\n");
-		return 0;
-	}
-
 	pr_info("capabilities: fan=%u fan_mode=%u hwmon=%u profile=%u rgb=%u dyn=%u coolboost=%u led=%u kbd_timeout=%u\n",
 		!!nitro_has_cap(nitro, NITRO_CAP_FAN),
 		!!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE),
@@ -2565,6 +2566,9 @@ static int __init nitro_init(void)
 		!!nitro_has_cap(nitro, NITRO_CAP_COOLBOOST),
 		!!nitro_has_cap(nitro, NITRO_CAP_LED_CLASS),
 		!!nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT));
+
+	if (nitro->probe_mode)
+		pr_info("probe mode: writes disabled, wmi_raw limited to read-only methods\n");
 	return 0;
 
 err_pdev:

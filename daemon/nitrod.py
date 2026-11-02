@@ -108,6 +108,15 @@ def read(path):
         return None
 
 
+def parse_ec_temp(text):
+    """Convert the kernel's "0x002f (0 47)" ec_cpu_temp line to °C."""
+    try:
+        hi, lo = text[text.index("(") + 1:text.index(")")].split()
+        return float(int(hi) * 256 + int(lo))
+    except (AttributeError, ValueError):
+        return None
+
+
 def write(path, text):
     with open(path, "w") as f:
         f.write(str(text))
@@ -219,10 +228,22 @@ def snapshot():
             d["gpu_rpm"] = read(f"{n}/fan2_input")
             t = read(f"{n}/temp1_input")
             d["ec_c"] = (int(t) / 1000.0) if t and t.lstrip("-").isdigit() else None
-    c = hwmon_find("coretemp")
-    if c:
+        else:
+            # Probe mode does not register a hwmon class; ec_cpu_temp is the
+            # only remaining EC temperature read.
+            d["ec_c"] = parse_ec_temp(d.get("ec_cpu_temp"))
+    # coretemp is Intel-only; AMD exposes the package sensor as k10temp (or
+    # zenpower when k10temp is not loaded).
+    for name in ("coretemp", "k10temp", "zenpower"):
+        c = hwmon_find(name)
+        if not c:
+            continue
         t = read(f"{c}/temp1_input")
-        d["package_c"] = (int(t) / 1000.0) if t and t.lstrip("-").isdigit() else None
+        if t and t.lstrip("-").isdigit():
+            d["package_c"] = int(t) / 1000.0
+            break
+    if d.get("package_c") is None:
+        d["package_c"] = d.get("ec_c")
     gpu_temp = None
     nv_hwmon = hwmon_find("nvidia") or hwmon_find("nouveau")
     if nv_hwmon:
@@ -862,8 +883,14 @@ def acquire_lock():
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
+        try:
+            holder = os.pread(fd, 32, 0).decode(errors="replace").strip()
+        except OSError:
+            holder = ""
         os.close(fd)
-        raise SystemExit("another nitrod instance is already running")
+        raise SystemExit(
+            "another nitrod instance is already running"
+            + (f" (pid {holder})" if holder.isdigit() else ""))
     os.ftruncate(fd, 0)
     os.write(fd, f"{os.getpid()}\n".encode())
     return fd

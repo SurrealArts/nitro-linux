@@ -40,20 +40,40 @@ A candidate probe entry is added only after a Model Support Report is triaged, a
 | Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
 | Nitro AN515-45 | Scala_CAS | V1.14 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
 
-If your model is in the table, load the module in read-only mode:
+If your model is in the table, load the module in read-only mode. The source
+installer does that in one step and keeps it that way across reboots:
+
+```bash
+sudo bash deploy/install.sh --probe
+```
+
+It writes `options nitro probe=1` to `/etc/modprobe.d/nitro-linux.conf`, so
+`modprobe`, `systemd-modules-load` and every later boot use probe mode. For a
+one-off load of an already installed module instead:
 
 ```bash
 sudo modprobe -r nitro 2>/dev/null || true
 sudo modprobe nitro probe=1
+```
+
+Then collect the read-only evidence:
+
+```bash
 cat /sys/devices/platform/nitro/capabilities
+cat /sys/devices/platform/nitro/ec_cpu_temp
+cat /sys/devices/platform/nitro/fan_cpu
+cat /sys/devices/platform/nitro/fan_gpu
 nitro report
 ```
 
-Probe mode exposes read-only attributes for the capabilities the probe entry
-advertises, does not register a hwmon class, LEDs, or platform profile, and
-limits `wmi_raw` to read methods. `CAP_HWMON` still gates the `ec_cpu_temp`
-attribute and the thermal pane in the TUI. Do not use `modprobe -f`, `insmod`, or patched DMI
-strings.
+Probe mode exposes read attributes for the capabilities the probe entry
+advertises; every write attribute returns `EPERM`. `fan_cpu`, `fan_gpu`,
+`fan_mode`, RGB, CoolBoost and `kbd_timeout` are all gated this way, so fan duty
+and RGB changes cannot be made or verified while `probe=1`. It registers the
+read-only hwmon class (fan tachos and EC temperature), but no LED class and no
+platform profile, and it limits `wmi_raw` to read methods. `CAP_HWMON` still
+gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
+`modprobe -f`, `insmod`, or patched DMI strings.
 
 ---
 
@@ -61,8 +81,9 @@ strings.
 
 1. Your report goes into the Candidates table in `docs/MODELS.md`
 2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
-3. You run the probe; we verify sensors → fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout, one at a time
-4. With recorded evidence, the model gets a quirk entry and moves to **Verified**
+3. You collect read evidence: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads. Nothing is written in this phase — write attributes return `EPERM`
+4. If the reads are sane, the probe entry is promoted and the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop
+5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
 CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off).
 

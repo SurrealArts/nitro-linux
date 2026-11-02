@@ -10,7 +10,7 @@
 
 ## Candidates (read-only probe)
 
-A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read paths only, do not register LED class or platform-profile devices, and reject non-read `wmi_raw` methods. They can expose `ec_cpu_temp` and fan sysfs reads, but they do not create a hwmon class.
+A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read attributes only, register a read-only hwmon class (fan tachos + EC temperature) but no LED class or platform profile, and reject non-read `wmi_raw` methods. Every write attribute returns `EPERM`.
 
 | Product        | Board     | BIOS  | Probe entry                                                        | Status        |
 | -------------- | --------- | ----- | ------------------------------------------------------------------ | ------------- |
@@ -22,7 +22,7 @@ A probe entry is added only after a [Model Support Report](https://github.com/Su
 These entries are a **hypothesis about which reads to attempt**.
 
 - **AN515-58** is the closest sibling of the verified AN515-57 and the board has two fan tachos (also exposed by the in-tree `acer-wmi` hwmon); the probe reads fan state and `ec_cpu_temp` through nitro's WMI/sysfs path. Static RGB is probed at four zones; `dyn` is withheld until `0x15` returns a sane payload on this board. `profile`, `coolboost`, `kbd_timeout`, and `led` stay off: the platform profile is currently owned by `acer-wmi`, CoolBoost needs direct EC evidence on _this_ board, and the keyboard timeout needs the APGE GET/SET round trip (with the matching EC `0x06` byte) on _this_ board.
-- **AN515-45** ([issue #2](https://github.com/SurrealArts/nitro-linux/issues/2)) shares the Nitro 5 EC/WMI family and its reporter says the full feature set worked after a local DMI patch. That is not recorded 10-step evidence, and CoolBoost still has no EC reading on this board, so it ships as the same read-only probe hypothesis until the verification sequence is complete.
+- **AN515-45** ([issue #2](https://github.com/SurrealArts/nitro-linux/issues/2)) shares the Nitro 5 EC/WMI family and its reporter says the full feature set worked after a local DMI patch. That is not recorded 10-step evidence, and CoolBoost still has no EC reading on this board, so it ships as the same read-only probe hypothesis until the verification sequence is complete. Its EC rejects `GET_MISC` selectors `1` (TKST) and `0x0B` (OPMS) with a non-zero status, so `has_misc` is off for this entry and neither attribute is exposed.
 
 Escalating a probe entry (for example enabling `dyn`) requires the previous probe output, for CoolBoost direct EC evidence, and for the keyboard timeout the APGE GET replies, on that board.
 
@@ -60,7 +60,7 @@ Every quirk entry is validated at module load (`nitro_validate_quirks()`). The i
 - `CAP_COOLBOOST` requires `CAP_FAN_MODE` and `coolboost_backend == EC10`
 - Backends are `NONE` or the single supported type (`FTBL` / `EC10`)
 
-A probe quirk (used with `probe=1`) is validated separately. It may advertise read-only capabilities (`CAP_FAN`, `CAP_FAN_MODE`, `CAP_HWMON`, `CAP_RGB`, `CAP_RGB_DYNAMIC`) so the probe can read sensors, fan state, and lighting, but it must use `NONE` backends and must not set `CAP_COOLBOOST`, `CAP_PLATFORM_PROFILE`, `CAP_LED_CLASS`, or `CAP_KBD_TIMEOUT`: those are unverified write paths, and probe mode does not register LED class or platform-profile devices. `CAP_HWMON` in a probe entry gates the `ec_cpu_temp` attribute and thermal userspace; it does not register a hwmon device in probe mode.
+A probe quirk (used with `probe=1`) is validated separately. It may advertise read-only capabilities (`CAP_FAN`, `CAP_FAN_MODE`, `CAP_HWMON`, `CAP_RGB`, `CAP_RGB_DYNAMIC`) so the probe can read sensors, fan state, and lighting, but it must use `NONE` backends and must not set `CAP_COOLBOOST`, `CAP_PLATFORM_PROFILE`, `CAP_LED_CLASS`, or `CAP_KBD_TIMEOUT`: those are unverified write paths, and probe mode does not register LED class or platform-profile devices. `CAP_HWMON` in a probe entry gates the `ec_cpu_temp` attribute, the thermal pane in userspace, and the read-only hwmon class (fan tachos + EC temperature).
 
 ---
 
@@ -102,7 +102,7 @@ Also include:
 One cooperative owner + recorded evidence. Do not skip or reorder:
 
 1. **Report**: DMI, board, BIOS, kernel, WMI devices, current behavior
-2. **Read-only probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes
+2. **Read-only probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. Steps 3-10 are recorded after the probe entry is promoted; the probe phase only collects the baseline reads
 3. **Sensors**: CPU/GPU temps and fan RPM match independent source
 4. **Fan duty**: one fan at a time; confirm RPM change, no oscillation
 5. **Fan mode**: Auto, Max, Custom accepted by EC
