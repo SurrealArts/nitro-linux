@@ -95,6 +95,15 @@ body:
     validations:
       required: false
 
+  - type: textarea
+    id: acpi-output
+    attributes:
+      label: "ACPI table (optional)"
+      description: "Only if a maintainer asked for it, when an ACPI-backed capability answers wrongly instead of being absent. Paste the `Method (WMAA ...)` block from your decompiled SSDT, or attach the `.dsl` file. See Contributing -> ACPI tables for the `acpidump` and `iasl` commands"
+      placeholder: "Method (WMAA, 2, Serialized)\n{\n    ...\n}"
+    validations:
+      required: false
+
   - type: checkboxes
     id: safety-ack
     attributes:
@@ -115,4 +124,4 @@ body:
       value: |
         ## Next Steps
 
-        Once your report is triaged, a candidate probe entry may be added in a future release. Maintainers will guide you through running `probe=1` to safely collect evidence.
+        Once your report is triaged, a candidate probe entry may be added in a future release. Maintainers will guide you through running `probe=1` to safely collect evidence, and — if a capability is backed by an ACPI method that answers wrongly on your board — through dumping the ACPI table that method lives in.

@@ -88,6 +88,34 @@ limits `wmi_raw` to read methods. `CAP_HWMON` still
 gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
 `modprobe -f`, `insmod`, or patched DMI strings.
 
+### ACPI tables (only when a maintainer asks)
+
+Some capabilities do not fail because a register is missing, but because the
+driver and that board's firmware disagree about how to talk to an ACPI method —
+the keyboard timeout goes through `WMAA`, and a board may number or lay out its
+arguments differently. The survey cannot see ACPI tables, so a maintainer will
+ask for them when a reply looks wrong rather than absent.
+
+```bash
+# Arch: sudo pacman -S --needed acpica. Debian/Ubuntu: sudo apt install acpica-tools
+cd /tmp && sudo acpidump -b && iasl -d /tmp/dsdt.dat /tmp/ssdt*.dat >/dev/null 2>&1
+grep -l "Method (WMAA" /tmp/*.dsl
+```
+
+Attach the `.dsl` file that matches, or paste its `Method (WMAA ...)` block plus
+the objects it calls (`CTID`, `WMIB`, `AAGT`, `AAST`) if they are defined nearby.
+`iasl` reports namespace errors and exits non-zero on most boards; that is
+normal for a table decompiled without the rest of the firmware around it, and
+the `.dsl` files are still written. Judge by `grep` finding a file, not by
+exit status. If `acpidump` is not available, there is no shortcut:
+`/sys/firmware/acpi/tables/SSDT*` is the compiled table, so it still needs
+`acpidump` or another acpica tool to read it.
+
+These commands copy and decompile tables into `/tmp`; they do not load anything
+into firmware and do not touch the EC. The method layout the driver expects is in
+[REVERSE.md](REVERSE.md#keyboard-backlight-timeout-wmi-apge), and that is what a
+dump gets compared against.
+
 ### Same-value write-back (opt-in)
 
 Probe mode cannot verify a write path, so promotion otherwise needs the SET call
@@ -174,7 +202,7 @@ board. A sibling model is not evidence for a write path.
 4. If the reads are sane, the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop. For most of them this is a `probe_writes=1` write-back run: the module writes that model's own read-back value and reports whether the SET was accepted
 5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
-CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off). `apge_raw` reads them back one at a time: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then `cat` the same file for the status, reply type and value.
+CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off). `apge_raw` reads them back one at a time: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then `cat` the same file for the status, reply type and value. If those replies are rejected or parse into an unexpected value, the fix depends on that board's firmware, so the next step is the ACPI table: [ACPI tables](#acpi-tables-only-when-a-maintainer-asks) above.
 
 ---
 
