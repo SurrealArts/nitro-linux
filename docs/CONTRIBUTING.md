@@ -75,6 +75,57 @@ limits `wmi_raw` to read methods. `CAP_HWMON` still
 gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
 `modprobe -f`, `insmod`, or patched DMI strings.
 
+### Same-value write-back (opt-in)
+
+Probe mode cannot verify a write path, so promotion otherwise needs the SET call
+tested by editing the quirks table and rebuilding. The `writeback` node closes
+that gap without ever writing a value that was not read from the same machine
+first. Add `probe_writes=1` to the load:
+
+```bash
+sudo modprobe -r nitro
+sudo modprobe nitro probe=1 probe_writes=1
+```
+
+The node only exists with that flag (root-only, `0600`). Write a path name, then
+read the report back:
+
+```bash
+echo fan_cpu > /sys/devices/platform/nitro/writeback
+cat              /sys/devices/platform/nitro/writeback
+```
+
+Supported paths: `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `kbd_timeout`,
+`coolboost`. Each one reads the current value, writes that exact value back,
+re-reads it, and restores the mode it had to switch — the fan paths go through
+`custom` like the normal control and put the previous mode back afterwards. A
+report from an AN515-57:
+
+```text
+path=fan_cpu
+read fan_mode cpu=auto gpu=auto
+read fan_cpu=50
+set fan_cpu mode=custom ret=0
+set fan_cpu=50 ret=0
+verify fan_cpu=50
+restore fan_mode cpu=auto gpu=auto ret=0
+verify fan_mode cpu=auto gpu=auto
+result=ok ret=0
+```
+
+The rules that make this safe to hand to a reporter:
+
+- The value always comes from a read on that model. Nothing here accepts a typed
+  value, and no path writes a constant.
+- A path that cannot read first does not write at all, so a board whose APGE GET
+  fails never receives an APGE SET through this node.
+- `coolboost` refuses unless both fans report `auto`, the same rule the normal
+  control enforces.
+- The fan paths restore the previous fan mode, so a test leaves the machine as it
+  found it. Confirm with `cat fan_mode` afterwards.
+- Run one path at a time. FTBL and CoolBoost can spin the fans up briefly while
+  the value is re-applied.
+
 ---
 
 ## What happens next
@@ -82,7 +133,7 @@ gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
 1. Your report goes into the Candidates table in `docs/MODELS.md`
 2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
 3. You collect read evidence: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads. Nothing is written in this phase — write attributes return `EPERM`
-4. If the reads are sane, the probe entry is promoted and the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop
+4. If the reads are sane, the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop. For most of them this is a `probe_writes=1` write-back run: the module writes that model's own read-back value and reports whether the SET was accepted
 5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
 CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off). `apge_raw` reads them back one at a time: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then `cat` the same file for the status, reply type and value.
@@ -109,9 +160,9 @@ This means:
 
 ## Safety rules (non-negotiable)
 
-- **Only load the module on verified hardware.** The DMI gate is a safety boundary, not a bug. The only exception is read-only probe mode (`probe=1`) on a model in the probe table.
+- **Only load the module on verified hardware.** The DMI gate is a safety boundary, not a bug. The exceptions are read-only probe mode (`probe=1`) on a model in the probe table, and `probe_writes=1`, which is only used when a maintainer asks for a same-value write-back run.
 - **Never force-load** (`modprobe -f`, `insmod`, patched DMI, edited source).
-- **No blind writes.** A successful module load ≠ working fan/RGB/CoolBoost.
+- **No blind writes.** A successful module load ≠ working fan/RGB/CoolBoost. The write-back node exists so a SET can be proven with that model's own value; anything else is still a blind write.
 - **CoolBoost requires direct EC evidence** (register offset + values) on that model.
 - **One change at a time.** If fans stop, temps climb, or backlight misbehaves: stop, unload, reboot.
 

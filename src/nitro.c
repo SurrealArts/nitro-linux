@@ -103,6 +103,7 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_MAX_ZONES				4
 #define NITRO_WMI_MAX_PAYLOAD			64
 #define NITRO_INPUT_MAX				128
+#define NITRO_WRITEBACK_REPORT_MAX		1024
 
 enum nitro_fan_mode {
 	NITRO_FAN_MODE_AUTO			= 1,
@@ -370,6 +371,11 @@ MODULE_PARM_DESC(disable_coolboost, "Disable CoolBoost control");
 module_param(disable_kbd_timeout, bool, 0444);
 MODULE_PARM_DESC(disable_kbd_timeout, "Disable keyboard backlight timeout control");
 
+static bool probe_writes;
+module_param(probe_writes, bool, 0444);
+MODULE_PARM_DESC(probe_writes,
+	"Allow same-value write-back tests on unverified models");
+
 struct nitro_device;
 
 struct nitro_led {
@@ -418,6 +424,7 @@ struct nitro_device {
 	u64 apge_raw_value;
 	u8 apge_raw_type;
 	u32 apge_raw_len;
+	char writeback_report[NITRO_WRITEBACK_REPORT_MAX];
 };
 
 static const u8 nitro_zone_ids[NITRO_MAX_ZONES] = { 0x01, 0x02, 0x04, 0x08 };
@@ -1849,6 +1856,347 @@ static ssize_t apge_raw_store(
 }
 static DEVICE_ATTR(apge_raw, 0600, apge_raw_show, apge_raw_store);
 
+static void writeback_line(
+	char *buf,
+	size_t size,
+	size_t *pos,
+	const char *fmt,
+	...)
+{
+	va_list args;
+
+	if (*pos + 1 >= size)
+		return;
+	va_start(args, fmt);
+	*pos += vscnprintf(buf + *pos, size - *pos, fmt, args);
+	va_end(args);
+}
+
+static int writeback_fan(
+	struct nitro_device *nitro,
+	u8 which,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 bitmap = nitro->quirks->fan_count >= 2 ?
+		NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU;
+	const char *name = which == NITRO_FAN_CPU ? "cpu" : "gpu";
+	u8 duty = 0, cpu = 0, gpu = 0, back_cpu = 0, back_gpu = 0;
+	int ret, err = 0, back = 0;
+
+	if (which == NITRO_FAN_GPU && nitro->quirks->fan_count < 2)
+		return -ENODEV;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"read fan_mode failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
+		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
+	ret = nitro_get_fan(which, &duty);
+	if (ret) {
+		writeback_line(buf, size, pos, "read fan_%s failed %d\n",
+			name, ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read fan_%s=%u\n", name, duty);
+
+	ret = nitro_set_fan_behavior(
+		which == NITRO_FAN_CPU ? NITRO_FANBIT_CPU : NITRO_FANBIT_GPU,
+		which == NITRO_FAN_CPU ? NITRO_FAN_MODE_CUSTOM : 0,
+		which == NITRO_FAN_CPU ? 0 : NITRO_FAN_MODE_CUSTOM);
+	writeback_line(buf, size, pos, "set fan_%s mode=custom ret=%d\n",
+		name, ret);
+	if (ret) {
+		err = ret;
+		goto restore;
+	}
+
+	ret = nitro_set_fan(which, duty);
+	writeback_line(buf, size, pos, "set fan_%s=%u ret=%d\n", name, duty, ret);
+	if (ret) {
+		err = ret;
+		goto restore;
+	}
+
+	ret = nitro_get_fan(which, &duty);
+	if (ret) {
+		writeback_line(buf, size, pos, "verify fan_%s failed %d\n",
+			name, ret);
+		err = ret;
+		goto restore;
+	}
+	writeback_line(buf, size, pos, "verify fan_%s=%u\n", name, duty);
+
+restore:
+	back = nitro_set_fan_behavior(bitmap, cpu, gpu);
+	writeback_line(buf, size, pos,
+		"restore fan_mode cpu=%s gpu=%s ret=%d\n",
+		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu), back);
+	if (!back) {
+		ret = nitro_get_fan_behavior(bitmap, &back_cpu, &back_gpu);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"verify fan_mode failed %d\n", ret);
+			back = ret;
+		} else if (back_cpu != cpu || back_gpu != gpu) {
+			writeback_line(buf, size, pos,
+				"verify fan_mode cpu=%s gpu=%s (expected cpu=%s gpu=%s)\n",
+				nitro_fan_mode_name(back_cpu),
+				nitro_fan_mode_name(back_gpu),
+				nitro_fan_mode_name(cpu),
+				nitro_fan_mode_name(gpu));
+			back = -EIO;
+		} else {
+			writeback_line(buf, size, pos,
+				"verify fan_mode cpu=%s gpu=%s\n",
+				nitro_fan_mode_name(back_cpu),
+				nitro_fan_mode_name(back_gpu));
+		}
+	}
+out:
+	mutex_unlock(&nitro->lock);
+	return err ? err : back;
+}
+
+static int writeback_fan_mode(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 bitmap = nitro->quirks->fan_count >= 2 ?
+		NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU;
+	u8 cpu = 0, gpu = 0, back_cpu = 0, back_gpu = 0;
+	int ret, err = 0;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"read fan_mode failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
+		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
+	ret = nitro_set_fan_behavior(bitmap, cpu, gpu);
+	writeback_line(buf, size, pos, "set fan_mode cpu=%s gpu=%s ret=%d\n",
+		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu), ret);
+	if (ret) {
+		err = ret;
+		goto out;
+	}
+	ret = nitro_get_fan_behavior(bitmap, &back_cpu, &back_gpu);
+	if (ret) {
+		writeback_line(buf, size, pos, "verify fan_mode failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "verify fan_mode cpu=%s gpu=%s\n",
+		nitro_fan_mode_name(back_cpu), nitro_fan_mode_name(back_gpu));
+	if (back_cpu != cpu || back_gpu != gpu)
+		err = -EIO;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static int writeback_ftbl(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 value = 0, back = 0;
+	int ret, err = 0;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_ftbl(&value);
+	if (ret) {
+		writeback_line(buf, size, pos, "read ftbl failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read ftbl=0x%02x\n", value);
+	ret = nitro_set_ftbl(value);
+	writeback_line(buf, size, pos, "set ftbl=0x%02x ret=%d\n", value, ret);
+	if (ret) {
+		err = ret;
+		goto out;
+	}
+	ret = nitro_get_ftbl(&back);
+	if (ret) {
+		writeback_line(buf, size, pos, "verify ftbl failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "verify ftbl=0x%02x\n", back);
+	if (back != value)
+		err = -EIO;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static int writeback_kbd_timeout(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 value = 0, back = 0;
+	int ret, err = 0;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_kbd_timeout(&value);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"read kbd_timeout failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read kbd_timeout=%u\n", value);
+	ret = nitro_set_kbd_timeout(value);
+	writeback_line(buf, size, pos, "set kbd_timeout=%u ret=%d\n", value, ret);
+	if (ret) {
+		err = ret;
+		goto out;
+	}
+	ret = nitro_get_kbd_timeout(&back);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"verify kbd_timeout failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "verify kbd_timeout=%u\n", back);
+	if (back != value)
+		err = -EIO;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static int writeback_coolboost(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 value = 0;
+	int ret, err = 0;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_coolboost(&value);
+	if (ret) {
+		writeback_line(buf, size, pos, "read coolboost failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read coolboost=%u\n", value);
+	ret = nitro_fans_auto();
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"skip coolboost: fans are not auto\n");
+		err = ret;
+		goto out;
+	}
+	ret = nitro_set_coolboost(value);
+	writeback_line(buf, size, pos, "set coolboost=%u ret=%d\n", value, ret);
+	if (ret)
+		err = ret;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static ssize_t writeback_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	ssize_t n;
+
+	if (!nitro)
+		return -ENODEV;
+	if (!probe_writes)
+		return -EPERM;
+	mutex_lock(&nitro->lock);
+	n = sysfs_emit(buf, "%s", nitro->writeback_report[0] ?
+		nitro->writeback_report : "no run yet\n");
+	mutex_unlock(&nitro->lock);
+	return n;
+}
+
+static ssize_t writeback_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	char work[NITRO_INPUT_MAX + 1];
+	char report[NITRO_WRITEBACK_REPORT_MAX];
+	char *p = work, *path;
+	size_t pos = 0;
+	int ret;
+
+	if (!nitro)
+		return -ENODEV;
+	if (!probe_writes)
+		return -EPERM;
+	if (!count || count > NITRO_INPUT_MAX)
+		return -EINVAL;
+	memcpy(work, buf, count);
+	work[count] = '\0';
+	path = strsep(&p, " \t\n");
+	if (!path || !*path)
+		return -EINVAL;
+
+	writeback_line(report, sizeof(report), &pos, "path=%s\n", path);
+	if (!strcmp(path, "fan_cpu"))
+		ret = writeback_fan(nitro, NITRO_FAN_CPU, report, sizeof(report),
+			&pos);
+	else if (!strcmp(path, "fan_gpu"))
+		ret = writeback_fan(nitro, NITRO_FAN_GPU, report, sizeof(report),
+			&pos);
+	else if (!strcmp(path, "fan_mode"))
+		ret = writeback_fan_mode(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "ftbl"))
+		ret = writeback_ftbl(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "kbd_timeout"))
+		ret = writeback_kbd_timeout(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "coolboost"))
+		ret = writeback_coolboost(nitro, report, sizeof(report), &pos);
+	else {
+		writeback_line(report, sizeof(report), &pos,
+			"result=error ret=-22\n");
+		writeback_line(report, sizeof(report), &pos,
+			"paths=fan_cpu fan_gpu fan_mode ftbl kbd_timeout coolboost\n");
+		mutex_lock(&nitro->lock);
+		memcpy(nitro->writeback_report, report, pos + 1);
+		mutex_unlock(&nitro->lock);
+		return -EINVAL;
+	}
+
+	writeback_line(report, sizeof(report), &pos, "result=%s ret=%d\n",
+		ret ? "error" : "ok", ret);
+	mutex_lock(&nitro->lock);
+	memcpy(nitro->writeback_report, report, pos + 1);
+	mutex_unlock(&nitro->lock);
+	pr_info_ratelimited("writeback %s %s\n", path, ret ? "failed" : "ok");
+	return count;
+}
+static DEVICE_ATTR(writeback, 0600, writeback_show, writeback_store);
+
 static ssize_t kbd_dynamic_show(
 	struct device *dev,
 	struct device_attribute *attr,
@@ -2458,6 +2806,8 @@ static ssize_t capabilities_show(
 		n += sysfs_emit_at(buf, n, " led=1");
 	if (nitro->capabilities & NITRO_CAP_KBD_TIMEOUT)
 		n += sysfs_emit_at(buf, n, " kbd_timeout=1");
+	if (probe_writes)
+		n += sysfs_emit_at(buf, n, " writeback=1");
 	n += sysfs_emit_at(buf, n, "\n");
 	return n;
 }
@@ -2493,6 +2843,8 @@ static umode_t nitro_attr_is_visible(
 	if (!strcmp(attr->name, "wmi_raw") || !strcmp(attr->name, "ec_raw") ||
 		!strcmp(attr->name, "apge_raw"))
 		return mode;
+	if (!strcmp(attr->name, "writeback"))
+		return probe_writes ? mode : 0;
 
 	if (!strcmp(attr->name, "fan_cpu")) {
 		if (!(nitro->capabilities & NITRO_CAP_FAN))
@@ -2565,6 +2917,7 @@ static struct attribute *nitro_attrs[] = {
 	&dev_attr_wmi_raw.attr,
 	&dev_attr_ec_raw.attr,
 	&dev_attr_apge_raw.attr,
+	&dev_attr_writeback.attr,
 	NULL,
 };
 
