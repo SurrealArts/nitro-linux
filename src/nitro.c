@@ -78,6 +78,13 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_FANBIT_GPU			0x08
 #define NITRO_FANBIT_BOTH			0x09
 
+#define NITRO_SENSOR_CPU_TEMP			0x01
+#define NITRO_SENSOR_CPU_FAN			0x02
+#define NITRO_SENSOR_EXT2_TEMP			0x03
+#define NITRO_SENSOR_GPU_FAN			0x06
+#define NITRO_SENSOR_GPU_TEMP			0x0A
+#define NITRO_TEMP_CHANNELS			3
+
 #define NITRO_CAP_FAN				BIT(0)
 #define NITRO_CAP_FAN_MODE			BIT(1)
 #define NITRO_CAP_HWMON				BIT(2)
@@ -378,6 +385,8 @@ struct nitro_device {
 	const struct nitro_quirks *quirks;
 	unsigned long capabilities;
 	bool probe_mode;
+	u16 sensors;
+	bool have_sensors;
 	struct nitro_led leds[NITRO_MAX_ZONES];
 	u8 saved_fan_cpu;
 	u8 saved_fan_gpu;
@@ -405,12 +414,27 @@ struct nitro_device {
 	u8 ec_raw_reg;
 	u8 ec_raw_val;
 	int ec_raw_status;
+	s16 apge_raw_status;
+	u64 apge_raw_value;
+	u8 apge_raw_type;
+	u32 apge_raw_len;
 };
 
 static const u8 nitro_zone_ids[NITRO_MAX_ZONES] = { 0x01, 0x02, 0x04, 0x08 };
 static const char *const nitro_zone_names[NITRO_MAX_ZONES] = {
 	"nitro:rgb:zone1", "nitro:rgb:zone2",
 	"nitro:rgb:zone3", "nitro:rgb:zone4",
+};
+
+static const u8 nitro_temp_sensor[NITRO_TEMP_CHANNELS] = {
+	NITRO_SENSOR_CPU_TEMP,
+	NITRO_SENSOR_GPU_TEMP,
+	NITRO_SENSOR_EXT2_TEMP,
+};
+
+static const u8 nitro_fan_sensor[2] = {
+	NITRO_SENSOR_CPU_FAN,
+	NITRO_SENSOR_GPU_FAN,
 };
 
 static struct nitro_device *nitro_current(void)
@@ -611,22 +635,50 @@ static int nitro_get_static(u8 zone, u8 *r, u8 *g, u8 *b)
 	return 0;
 }
 
-static int nitro_get_sysinfo(u8 a0, u8 a1, u8 *v0, u8 *v1)
+static int nitro_get_sysinfo_full(u8 a0, u8 a1, u8 *out)
 {
 	u8 in[4] = { a0, a1, 0, 0 };
-	u8 out[8] = { 0 };
 	int ret = nitro_bh_call(
 		NITRO_BH_SYSINFO,
 		in, sizeof(in),
-		out, sizeof(out));
+		out, 8);
+
+	if (ret)
+		return ret;
+	return out[0] ? -EPROTO : 0;
+}
+
+static int nitro_get_sysinfo(u8 a0, u8 a1, u8 *v0, u8 *v1)
+{
+	u8 out[8] = { 0 };
+	int ret = nitro_get_sysinfo_full(a0, a1, out);
 
 	if (ret)
 		return ret;
 	*v0 = out[1];
 	*v1 = out[2];
-	if (out[0] != 0)
-		return -EPROTO;
 	return 0;
+}
+
+static int nitro_get_sensor(u8 sensor, unsigned int *value)
+{
+	u8 out[8] = { 0 };
+	int ret = nitro_get_sysinfo_full(1, sensor, out);
+
+	if (ret)
+		return ret;
+	*value = ((unsigned int)out[2] << 8) | out[1];
+	return 0;
+}
+
+static void nitro_read_sensors(struct nitro_device *nitro)
+{
+	u8 out[8] = { 0 };
+
+	if (nitro_get_sysinfo_full(0, 0, out))
+		return;
+	nitro->sensors = (u16)(out[3] | (out[4] << 8));
+	nitro->have_sensors = nitro->sensors != 0;
 }
 
 static int nitro_set_fan(u8 which, u8 duty)
@@ -721,65 +773,77 @@ static int nitro_set_coolboost(u8 value)
 	return 0;
 }
 
-static int nitro_apge_call(u32 method, u64 in, u64 *out)
+struct nitro_apge_result {
+	int status;
+	u64 value;
+	u8 type;
+	u32 len;
+};
+
+static int nitro_apge_call(u32 method, u64 in, struct nitro_apge_result *res)
 {
 	struct acpi_buffer input = { sizeof(in), &in };
 	struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *obj;
 	acpi_status status;
-	u64 value = 0;
 
-	if (method != NITRO_APGE_SET && method != NITRO_APGE_GET)
+	memset(res, 0, sizeof(*res));
+	if (method != NITRO_APGE_SET && method != NITRO_APGE_GET) {
+		res->status = -EINVAL;
 		return -EINVAL;
+	}
 
 	status = wmi_evaluate_method(
 		NITRO_APGE_GUID, 0, method, &input, &output);
 	if (ACPI_FAILURE(status)) {
 		pr_debug("APGE 0x%x evaluate failed: %s\n",
 			method, acpi_format_exception(status));
+		res->status = -EIO;
 		return -EIO;
 	}
 
 	obj = output.pointer;
-	if (!obj)
+	if (!obj) {
+		res->status = -ENODATA;
 		return -ENODATA;
+	}
 
+	res->type = obj->type;
 	if (obj->type == ACPI_TYPE_INTEGER) {
-		value = obj->integer.value;
+		res->value = obj->integer.value;
+		res->len = sizeof(u64);
 	} else if (obj->type == ACPI_TYPE_BUFFER) {
-		if (obj->buffer.length == sizeof(u32)) {
-			u32 tmp;
-
-			memcpy(&tmp, obj->buffer.pointer, sizeof(tmp));
-			value = tmp;
-		} else if (obj->buffer.length == sizeof(u64)) {
-			memcpy(&value, obj->buffer.pointer, sizeof(value));
-		} else {
+		res->len = obj->buffer.length;
+		if (!res->len || res->len > sizeof(u64)) {
 			pr_debug("APGE 0x%x reply length %u\n",
-				method, obj->buffer.length);
+				method, res->len);
 			kfree(obj);
+			res->status = -EPROTO;
 			return -EPROTO;
 		}
+		memcpy(&res->value, obj->buffer.pointer, res->len);
 	} else {
 		pr_debug("APGE 0x%x unexpected type %d\n", method, obj->type);
 		kfree(obj);
+		res->status = -EPROTO;
 		return -EPROTO;
 	}
 	kfree(obj);
-
-	if (out)
-		*out = value;
 	return 0;
 }
 
 static int nitro_get_kbd_timeout(u8 *enabled)
 {
+	struct nitro_apge_result res;
 	u64 value;
 	int ret = nitro_apge_call(
-		NITRO_APGE_GET, NITRO_APGE_KBD_TIMEOUT_QUERY, &value);
+		NITRO_APGE_GET, NITRO_APGE_KBD_TIMEOUT_QUERY, &res);
 
-	if (ret)
+	if (ret) {
+		pr_info("keyboard timeout query failed %d\n", ret);
 		return ret;
+	}
+	value = res.value;
 	if (
 		value == NITRO_APGE_KBD_TIMEOUT_ON_REPLY ||
 		value == NITRO_APGE_KBD_TIMEOUT_ON_UNSET) {
@@ -797,18 +861,19 @@ static int nitro_get_kbd_timeout(u8 *enabled)
 		*enabled = (value & NITRO_APGE_KBD_TIMEOUT_DURATION_MASK) ? 1 : 0;
 		return 0;
 	}
-	pr_debug("APGE keyboard timeout reply 0x%llx\n", value);
+	pr_info("APGE keyboard timeout reply 0x%016llx type %u len %u\n",
+		value, res.type, res.len);
 	return -EPROTO;
 }
 
 static int nitro_set_kbd_timeout(bool on)
 {
-	u64 value;
+	struct nitro_apge_result res;
 	u8 check;
 	int ret = nitro_apge_call(
 		NITRO_APGE_SET,
 		on ? NITRO_APGE_KBD_TIMEOUT_ON : NITRO_APGE_KBD_TIMEOUT_OFF,
-		&value);
+		&res);
 
 	if (ret)
 		return ret;
@@ -941,24 +1006,8 @@ static void nitro_build_effect(
 
 static int nitro_get_rpm(bool cpu, unsigned int *rpm)
 {
-	u8 v0, v1;
-	int ret = nitro_get_sysinfo(1, cpu ? 2 : 6, &v0, &v1);
-
-	if (ret)
-		return ret;
-	*rpm = ((unsigned int)v1 << 8) | v0;
-	return 0;
-}
-
-static int nitro_get_ctml(unsigned int *temp_c)
-{
-	u8 v0, v1;
-	int ret = nitro_get_sysinfo(1, 1, &v0, &v1);
-
-	if (ret)
-		return ret;
-	*temp_c = v0;
-	return 0;
+	return nitro_get_sensor(
+		cpu ? NITRO_SENSOR_CPU_FAN : NITRO_SENSOR_GPU_FAN, rpm);
 }
 
 static int nitro_fan_write(struct nitro_device *nitro, u8 which, u8 duty)
@@ -1717,6 +1766,89 @@ static ssize_t ec_raw_store(
 }
 static DEVICE_ATTR(ec_raw, 0600, ec_raw_show, ec_raw_store);
 
+static ssize_t apge_raw_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	const char *type;
+	ssize_t n;
+
+	if (!nitro)
+		return -ENODEV;
+	mutex_lock(&nitro->lock);
+	if (nitro->apge_raw_type == ACPI_TYPE_INTEGER)
+		type = "int";
+	else if (nitro->apge_raw_type == ACPI_TYPE_BUFFER)
+		type = "buffer";
+	else
+		type = "none";
+	n = sysfs_emit(
+		buf, "status=%d type=%s len=%u val=0x%016llx\n",
+		nitro->apge_raw_status, type,
+		nitro->apge_raw_len, nitro->apge_raw_value);
+	mutex_unlock(&nitro->lock);
+	return n;
+}
+
+static ssize_t apge_raw_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	struct nitro_apge_result res;
+	char work[NITRO_INPUT_MAX + 1];
+	unsigned int method = 0;
+	unsigned long long value = 0;
+	char *cur, *tok;
+	int n = 0, ret;
+
+	if (!nitro)
+		return -ENODEV;
+	if (count > NITRO_INPUT_MAX)
+		return -EINVAL;
+	memcpy(work, buf, count);
+	work[count] = '\0';
+	cur = work;
+
+	while ((tok = strsep(&cur, " \t\n"))) {
+		if (!*tok)
+			continue;
+		if (n == 0) {
+			ret = kstrtouint(tok, 0, &method);
+			if (ret)
+				return ret;
+		} else if (n == 1) {
+			ret = kstrtoull(tok, 0, &value);
+			if (ret)
+				return ret;
+		} else {
+			return -EINVAL;
+		}
+		n++;
+	}
+	if (n != 2)
+		return -EINVAL;
+	if (method != NITRO_APGE_GET)
+		return -EPERM;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_apge_call(method, value, &res);
+	nitro->apge_raw_status = ret;
+	nitro->apge_raw_type = res.type;
+	nitro->apge_raw_len = res.len;
+	nitro->apge_raw_value = res.value;
+	mutex_unlock(&nitro->lock);
+	if (ret)
+		return ret;
+	pr_info_ratelimited("apge_raw query 0x%llx\n", value);
+	return count;
+}
+static DEVICE_ATTR(apge_raw, 0600, apge_raw_show, apge_raw_store);
+
 static ssize_t kbd_dynamic_show(
 	struct device *dev,
 	struct device_attribute *attr,
@@ -1883,6 +2015,19 @@ static ssize_t ec_cpu_temp_show(
 }
 static DEVICE_ATTR_RO(ec_cpu_temp);
 
+static bool nitro_sensor_present(const struct nitro_device *nitro, u8 sensor)
+{
+	if (!nitro->have_sensors)
+		return true;
+	return nitro->sensors & BIT(sensor - 1);
+}
+
+static u8 nitro_fan_bitmap(const struct nitro_device *nitro)
+{
+	return nitro->quirks->fan_count >= 2 ?
+		NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU;
+}
+
 static umode_t nitro_hwmon_is_visible(
 	const void *drvdata,
 	enum hwmon_sensor_types type,
@@ -1893,24 +2038,60 @@ static umode_t nitro_hwmon_is_visible(
 
 	if (!nitro || !(nitro->capabilities & NITRO_CAP_HWMON))
 		return 0;
+	if (channel < 0)
+		return 0;
 
 	switch (type) {
 	case hwmon_fan:
-		if (attr != hwmon_fan_input)
+		if (attr != hwmon_fan_input || channel > 1)
 			break;
-		if (channel == 0)
-			return 0444;
-		if (channel == 1 && nitro->quirks->fan_count >= 2)
-			return 0444;
-		break;
+		if (channel == 1 && nitro->quirks->fan_count < 2)
+			break;
+		if (!nitro_sensor_present(nitro, nitro_fan_sensor[channel]))
+			break;
+		return 0444;
 	case hwmon_temp:
-		if (channel == 0 && attr == hwmon_temp_input)
-			return 0444;
-		break;
+		if (attr != hwmon_temp_input || channel >= NITRO_TEMP_CHANNELS)
+			break;
+		if (!nitro->have_sensors && channel)
+			break;
+		if (!nitro_sensor_present(nitro, nitro_temp_sensor[channel]))
+			break;
+		return 0444;
+	case hwmon_pwm:
+		if (nitro->probe_mode)
+			break;
+		if ((nitro->capabilities & (NITRO_CAP_FAN | NITRO_CAP_FAN_MODE)) !=
+			(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE))
+			break;
+		if (channel > 1)
+			break;
+		if (channel == 1 && nitro->quirks->fan_count < 2)
+			break;
+		if (!nitro_sensor_present(nitro, nitro_fan_sensor[channel]))
+			break;
+		return 0644;
 	default:
 		break;
 	}
 	return 0;
+}
+
+static int nitro_fan_mode_to_pwm(u8 mode, long *val)
+{
+	switch (mode) {
+	case NITRO_FAN_MODE_MAX:
+		*val = 0;
+		return 0;
+	case NITRO_FAN_MODE_CUSTOM:
+		*val = 1;
+		return 0;
+	case NITRO_FAN_MODE_AUTO:
+		*val = 2;
+		return 0;
+	default:
+		return -ENXIO;
+	}
 }
 
 static int nitro_hwmon_read(
@@ -1922,6 +2103,7 @@ static int nitro_hwmon_read(
 {
 	struct nitro_device *nitro = dev_get_drvdata(dev);
 	unsigned int v;
+	u8 duty, cpu, gpu;
 	int ret;
 
 	if (!nitro)
@@ -1940,29 +2122,115 @@ static int nitro_hwmon_read(
 		*val = v;
 		return 0;
 	case hwmon_temp:
-		if (attr != hwmon_temp_input || channel != 0)
+		if (attr != hwmon_temp_input || channel >= NITRO_TEMP_CHANNELS)
 			return -EOPNOTSUPP;
 		mutex_lock(&nitro->lock);
-		ret = nitro_get_ctml(&v);
+		ret = nitro_get_sensor(nitro_temp_sensor[channel], &v);
 		mutex_unlock(&nitro->lock);
 		if (ret)
 			return ret;
 		*val = (long)v * 1000;
 		return 0;
+	case hwmon_pwm:
+		if (channel != 0 && channel != 1)
+			return -EOPNOTSUPP;
+		if (attr == hwmon_pwm_input) {
+			mutex_lock(&nitro->lock);
+			ret = nitro_get_fan(
+				channel ? NITRO_FAN_GPU : NITRO_FAN_CPU, &duty);
+			mutex_unlock(&nitro->lock);
+			if (ret)
+				return ret;
+			*val = DIV_ROUND_CLOSEST((unsigned int)duty * 255, 100);
+			return 0;
+		}
+		if (attr != hwmon_pwm_enable)
+			return -EOPNOTSUPP;
+		mutex_lock(&nitro->lock);
+		ret = nitro_get_fan_behavior(nitro_fan_bitmap(nitro), &cpu, &gpu);
+		mutex_unlock(&nitro->lock);
+		if (ret)
+			return ret;
+		return nitro_fan_mode_to_pwm(channel ? gpu : cpu, val);
 	default:
 		return -EOPNOTSUPP;
 	}
 }
 
+static int nitro_hwmon_write(
+	struct device *dev,
+	enum hwmon_sensor_types type,
+	u32 attr,
+	int channel,
+	long val)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+	u8 mode;
+	int ret;
+
+	if (!nitro)
+		return -ENODEV;
+	if (nitro->probe_mode)
+		return -EPERM;
+	if (type != hwmon_pwm)
+		return -EOPNOTSUPP;
+	if (channel != 0 && channel != 1)
+		return -EOPNOTSUPP;
+	if (channel == 1 && nitro->quirks->fan_count < 2)
+		return -EOPNOTSUPP;
+
+	if (attr == hwmon_pwm_input) {
+		if (val < 0 || val > 255)
+			return -EINVAL;
+		return nitro_fan_write(
+			nitro,
+			channel ? NITRO_FAN_GPU : NITRO_FAN_CPU,
+			(u8)DIV_ROUND_CLOSEST(val * 100, 255));
+	}
+	if (attr != hwmon_pwm_enable)
+		return -EOPNOTSUPP;
+
+	switch (val) {
+	case 0:
+		mode = NITRO_FAN_MODE_MAX;
+		break;
+	case 1:
+		mode = NITRO_FAN_MODE_CUSTOM;
+		break;
+	case 2:
+		mode = NITRO_FAN_MODE_AUTO;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	mutex_lock(&nitro->lock);
+	if (channel)
+		ret = nitro_set_fan_behavior(NITRO_FANBIT_GPU, 0, mode);
+	else
+		ret = nitro_set_fan_behavior(NITRO_FANBIT_CPU, mode, 0);
+	mutex_unlock(&nitro->lock);
+	if (ret)
+		return ret;
+	pr_info_ratelimited("hwmon fan %s mode %u\n",
+		channel ? "gpu" : "cpu", mode);
+	return 0;
+}
+
 static const struct hwmon_channel_info *const nitro_hwmon_info[] = {
 	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT, HWMON_F_INPUT),
-	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+	HWMON_CHANNEL_INFO(temp,
+		HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT),
+	HWMON_CHANNEL_INFO(pwm,
+		HWMON_PWM_INPUT | HWMON_PWM_ENABLE,
+		HWMON_PWM_INPUT | HWMON_PWM_ENABLE),
 	NULL
 };
 
 static const struct hwmon_ops nitro_hwmon_ops = {
 	.is_visible = nitro_hwmon_is_visible,
 	.read = nitro_hwmon_read,
+	.write = nitro_hwmon_write,
 };
 
 static const struct hwmon_chip_info nitro_hwmon_chip = {
@@ -2222,7 +2490,8 @@ static umode_t nitro_attr_is_visible(
 	 * wmi_raw restricts methods internally, and ec_raw store only selects
 	 * the register index for read without performing any hardware EC write.
 	 */
-	if (!strcmp(attr->name, "wmi_raw") || !strcmp(attr->name, "ec_raw"))
+	if (!strcmp(attr->name, "wmi_raw") || !strcmp(attr->name, "ec_raw") ||
+		!strcmp(attr->name, "apge_raw"))
 		return mode;
 
 	if (!strcmp(attr->name, "fan_cpu")) {
@@ -2295,6 +2564,7 @@ static struct attribute *nitro_attrs[] = {
 	&dev_attr_ec_cpu_temp.attr,
 	&dev_attr_wmi_raw.attr,
 	&dev_attr_ec_raw.attr,
+	&dev_attr_apge_raw.attr,
 	NULL,
 };
 
@@ -2441,6 +2711,8 @@ static void nitro_log_state(struct nitro_device *nitro)
 		nitro_has_cap(nitro, NITRO_CAP_RGB) && nzones &&
 		!nitro_get_static(nitro_zone_ids[0], &r, &g, &b))
 		pr_info("zone1 RGB=%u %u %u\n", r, g, b);
+	if (nitro->have_sensors)
+		pr_info("supported sensors 0x%04x\n", nitro->sensors);
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_HWMON) &&
 		!nitro_get_sysinfo(1, 1, &v0, &v1))
@@ -2552,6 +2824,8 @@ static int __init nitro_init(void)
 	platform_set_drvdata(nitro_pdev, nitro);
 
 	mutex_lock(&nitro->lock);
+	if (nitro_has_cap(nitro, NITRO_CAP_HWMON))
+		nitro_read_sensors(nitro);
 	if (!nitro->probe_mode) {
 		nitro_save_initial(nitro);
 		if (
