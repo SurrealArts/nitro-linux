@@ -33,6 +33,7 @@ jobs:
             tools/check_version.py \
             tools/check_models.py \
             tools/check_install_drift.py \
+            tools/check_suspend.py \
             tools/bump_version.py
 
       - name: Install ruff
