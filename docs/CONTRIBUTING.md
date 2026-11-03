@@ -33,13 +33,9 @@ Open a **Model support report** issue and paste the output. Also include:
 
 ## Probe (candidate models)
 
-A candidate probe entry is added only after a Model Support Report is triaged, and it keeps the full `sys_vendor` + `product_name` + `board_name` triad. Current probe table:
+A candidate probe entry is added only after a Model Support Report is triaged, and it keeps the full `sys_vendor` + `product_name` + `board_name` triad. The current table lives in [MODELS.md](MODELS.md#candidates-probe-entry), which `tools/check_models.py` checks against the driver's DMI tables; this page does not repeat it.
 
-| Product        | Board     | BIOS  | Probe reads                                   |
-| -------------- | --------- | ----- | --------------------------------------------- |
-| Nitro AN515-58 | Jimny_ADH | V2.21 | 2x fans, fan mode, ec_cpu_temp, 4x static RGB |
-
-If your model is in the table, load the module in read-only mode. The source
+If your model is listed there, load the module in read-only mode. The source
 installer does that in one step and keeps it that way across reboots:
 
 ```bash
@@ -174,7 +170,7 @@ board. A sibling model is not evidence for a write path.
 
 1. Your report goes into the Candidates table in `docs/MODELS.md`
 2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
-3. You collect read evidence with `sudo python3 tools/probe_survey.py`: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads, the EC register sweep and the kernel log. Nothing is written in this phase — write attributes return `EPERM`
+3. You collect read evidence with `sudo python3 tools/probe_survey.py`: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads, the EC register sweep and the kernel log. Nothing in this phase writes a setting: every write attribute returns `EPERM`, and the sysinfo poll's EC `PSEE` side effect is the same one the driver makes at load
 4. If the reads are sane, the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop. For most of them this is a `probe_writes=1` write-back run: the module writes that model's own read-back value and reports whether the SET was accepted
 5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
