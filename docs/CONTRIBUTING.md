@@ -69,8 +69,9 @@ Probe mode exposes read attributes for the capabilities the probe entry
 advertises; every write attribute returns `EPERM`. `fan_cpu`, `fan_gpu`,
 `fan_mode`, RGB, CoolBoost and `kbd_timeout` are all gated this way, so fan duty
 and RGB changes cannot be made or verified while `probe=1`. It registers the
-read-only hwmon class (fan tachos and EC temperature), but no LED class and no
-platform profile, and it limits `wmi_raw` to read methods. `CAP_HWMON` still
+read-only hwmon class (fan tachos and whichever temperatures the firmware
+reports), but no LED class, no platform profile and no PWM channels, and it
+limits `wmi_raw` to read methods. `CAP_HWMON` still
 gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
 `modprobe -f`, `insmod`, or patched DMI strings.
 
@@ -84,7 +85,7 @@ gates the `ec_cpu_temp` attribute and the thermal pane in the TUI. Do not use
 4. If the reads are sane, the probe entry is promoted and the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop
 5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
-CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off).
+CoolBoost needs direct EC evidence on **that specific model**. The 30-second keyboard timeout needs its APGE GET replies on that model (`0x1E0000080000` on after a SET, `0x1E0000000000` on before the first SET of the boot, `0x80000` off). `apge_raw` reads them back one at a time: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then `cat` the same file for the status, reply type and value.
 
 ---
 

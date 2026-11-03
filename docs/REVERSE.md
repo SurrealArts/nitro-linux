@@ -23,6 +23,42 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
+### Sensors (sysinfo 0x05)
+
+`WMBH` `Arg1` = `0x05` takes the same 64-bit command word the in-tree
+`acer-wmi` uses: bits 7-0 select the command, bits 15-8 the sensor. The reply
+carries the status in bits 7-0, the reading in bits 23-8 and the
+supported-sensor bitmap in bits 39-24.
+
+| Command | Selector | Reply                          |
+| ------- | -------- | ------------------------------ |
+| `0x00`  | none     | supported-sensor bitmap        |
+| `0x01`  | sensor   | reading (degrees C or RPM)     |
+| `0x02`  | none     | battery status                 |
+
+Bitmap bit `n` means sensor `n + 1` is supported. AN515-57 returns `0x0227`:
+CPU temperature (1), CPU fan (2), external temperature 2 (3), GPU fan (6) and
+GPU temperature (`0x0A`). At idle `0x01` read 83 °C, `0x03` 74 °C and `0x0A`
+53 °C, matching the `acer-wmi` `predator_v4` sensor list. The driver polls
+this command as step 1 of the static-lighting enable sequence, so the bitmap
+costs no extra call at probe.
+
+The bitmap is read once at load and hides the hwmon channels the firmware does
+not report. A zero bitmap falls back to the quirk's `fan_count` and the single
+CPU temperature.
+
+| hwmon attribute                            | Channel               | Source         |
+| ------------------------------------------ | --------------------- | -------------- |
+| `temp1_input` `temp2_input` `temp3_input`  | CPU / GPU / external 2 | sensors 1, `0x0A`, 3 |
+| `fan1_input` `fan2_input`                  | CPU / GPU             | sensors 2, 6   |
+| `pwm1` `pwm2`                              | CPU / GPU duty 0-255  | `0x10` / `0x11` |
+| `pwm1_enable` `pwm2_enable`                | 0 max, 1 custom, 2 auto | `0x0E` / `0x0F` |
+
+`pwmN` reads `round(duty * 255 / 100)`; a write converts back to a percentage
+and switches that fan to custom, the same path `fan_cpu` and `fan_gpu` use.
+`pwmN_enable` writes only that fan's mode and leaves the other fan alone. The
+PWM channels are not created in probe mode.
+
 ### Keyboard backlight timeout (WMI APGE)
 
 The 30-second timeout is not on the gaming GUID. It uses the APGE interface: GUID `61EF69EA-865C-4BC3-A502-A0DEBA0CB531`, ACPI object id `AA` -> method `WMAA` in SSDT12. Method `1` is SET and `2` is GET; both take an 8-byte little-endian payload that `WMAA` forwards to firmware through `WSMI`.
@@ -52,6 +88,8 @@ EC cross-check (AN515-57, `ec_read()`): the setting is backed by EC `0x06`, whic
 - Driver: `kbd_timeout` RW sysfs, accepts `0`/`1`/`on`/`off`; SET is verified by a follow-up GET.
 - Gated by `NITRO_CAP_KBD_TIMEOUT`. If the APGE GUID is missing the capability is dropped at load and the module still probes.
 - The value read at module load is saved and restored on module unload; probe mode reads it without saving.
+- `apge_raw` is the root-only (`0600`) diagnostic for a board whose reply does not parse: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then read it back for `status`, the reply type and length, and the 64-bit value. Only method `2` (GET) is accepted, so the node cannot change firmware state. ACPI integers and buffers of 1-8 bytes are accepted and zero-extended; anything else fails with `-EPROTO`.
+- A GET that returns an unparsable value, or a call that the ACPI method rejects, is logged at `pr_info` (`APGE keyboard timeout reply 0x...`, `keyboard timeout query failed <errno>`) before the capability is dropped, so a model report can carry the raw reply without dynamic debug.
 
 ### CoolBoost (direct EC)
 

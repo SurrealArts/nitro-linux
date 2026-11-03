@@ -5,13 +5,13 @@
 | Model    | Board     | BIOS  | Status       | Notes                                                                                                              |
 | -------- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
 | AN515-57 | Scala_TLS | V1.22 | **Verified** | All features: fan, profile, 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10), 30-sec keyboard timeout (WMI APGE) |
-| AN515-45 | Scala_CAS | V1.14 | **Verified** | All features: fan, fan mode, profile (FTBL), 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10), 30-sec keyboard timeout (WMI APGE). has_misc=false |
+| AN515-45 | Scala_CAS | V1.14 | **Verified** | fan, fan mode, profile (FTBL), 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10). The 30-sec keyboard timeout is enabled in quirks but drops at load because the APGE GET reply does not parse. has_misc=false |
 
 ---
 
 ## Candidates (read-only probe)
 
-A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read attributes only, register a read-only hwmon class (fan tachos + EC temperature) but no LED class or platform profile, and reject non-read `wmi_raw` methods. Every write attribute returns `EPERM`.
+A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read attributes only, register a read-only hwmon class (fan tachos and whichever temperatures the firmware reports) but no LED class, platform profile or PWM channels, and reject non-read `wmi_raw` methods. Every write attribute returns `EPERM`.
 
 | Product        | Board     | BIOS  | Probe entry                                                        | Status        |
 | -------------- | --------- | ----- | ------------------------------------------------------------------ | ------------- |
