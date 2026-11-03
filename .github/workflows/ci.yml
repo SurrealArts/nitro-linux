@@ -126,6 +126,15 @@ jobs:
 
       - run: python tools/check_models.py
 
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - run: make test
+
   kernel:
     runs-on: ubuntu-latest
     container: archlinux:base-devel@sha256:3cbf69d2d5958d6a294f3722c5668e6187c4df8e00fa27f72352f0bf83e495e1

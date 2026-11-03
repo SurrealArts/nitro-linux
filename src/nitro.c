@@ -32,6 +32,8 @@
 #include <linux/platform_profile.h>
 #include <linux/string.h>
 
+#include "writeback.h"
+
 #ifndef NITRO_VERSION
 #define NITRO_VERSION "unknown"
 #endif
@@ -104,12 +106,6 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_WMI_MAX_PAYLOAD			64
 #define NITRO_INPUT_MAX				128
 #define NITRO_WRITEBACK_REPORT_MAX		1024
-
-enum nitro_fan_mode {
-	NITRO_FAN_MODE_AUTO			= 1,
-	NITRO_FAN_MODE_MAX			= 2,
-	NITRO_FAN_MODE_CUSTOM			= 3,
-};
 
 enum nitro_ftbl {
 	NITRO_FTBL_BALANCED			= 0x00,
@@ -1884,13 +1880,11 @@ static int writeback_fan(
 	u8 duty = 0, cpu = 0, gpu = 0, back_cpu = 0, back_gpu = 0;
 	int ret, err = 0, back = 0;
 
-	if (!nitro->quirks->fan_count) {
-		writeback_line(buf, size, pos, "skip: this model reports no fan\n");
-		return -ENODEV;
-	}
-	if (which == NITRO_FAN_GPU && nitro->quirks->fan_count < 2) {
-		writeback_line(buf, size, pos,
-			"skip: this model reports one fan\n");
+	if (!nitro_wb_fan_allowed(
+		nitro->quirks->fan_count, which == NITRO_FAN_GPU)) {
+		writeback_line(buf, size, pos, nitro->quirks->fan_count ?
+			"skip: this model reports one fan\n" :
+			"skip: this model reports no fan\n");
 		return -ENODEV;
 	}
 
@@ -1904,10 +1898,7 @@ static int writeback_fan(
 	}
 	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
-	if (
-		cpu < NITRO_FAN_MODE_AUTO || cpu > NITRO_FAN_MODE_CUSTOM ||
-		(nitro->quirks->fan_count >= 2 &&
-			(gpu < NITRO_FAN_MODE_AUTO || gpu > NITRO_FAN_MODE_CUSTOM))) {
+	if (!nitro_wb_modes_ok(nitro->quirks->fan_count, cpu, gpu)) {
 		writeback_line(buf, size, pos,
 			"skip: fan_mode read as cpu=%u gpu=%u, not a known mode\n",
 			cpu, gpu);
@@ -2007,10 +1998,7 @@ static int writeback_fan_mode(
 	}
 	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
-	if (
-		cpu < NITRO_FAN_MODE_AUTO || cpu > NITRO_FAN_MODE_CUSTOM ||
-		(nitro->quirks->fan_count >= 2 &&
-			(gpu < NITRO_FAN_MODE_AUTO || gpu > NITRO_FAN_MODE_CUSTOM))) {
+	if (!nitro_wb_modes_ok(nitro->quirks->fan_count, cpu, gpu)) {
 		writeback_line(buf, size, pos,
 			"skip: fan_mode read as cpu=%u gpu=%u, not a known mode\n",
 			cpu, gpu);
@@ -2132,13 +2120,12 @@ static int writeback_coolboost(
 		goto out;
 	}
 	writeback_line(buf, size, pos, "read coolboost=%u\n", value);
-	if (nitro->quirks->fan_count >= 2) {
-		ret = nitro_fans_auto();
-	} else {
-		ret = nitro_get_fan_behavior(NITRO_FANBIT_CPU, &cpu, &gpu);
-		if (!ret && cpu != NITRO_FAN_MODE_AUTO)
-			ret = -EPERM;
-	}
+	ret = nitro_get_fan_behavior(
+		nitro->quirks->fan_count >= 2 ?
+			NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU,
+		&cpu, &gpu);
+	if (!ret && !nitro_wb_fans_auto(nitro->quirks->fan_count, cpu, gpu))
+		ret = -EPERM;
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"skip coolboost: fans are not auto\n");

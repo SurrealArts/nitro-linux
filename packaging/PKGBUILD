@@ -43,6 +43,7 @@ package() {
   install -Dm644 "$src/VERSION" "$pkgdir/usr/src/nitro-$pkgver/VERSION"
   install -Dm644 "$src/Makefile" "$pkgdir/usr/src/nitro-$pkgver/Makefile"
   install -Dm644 "$src/src/nitro.c" "$pkgdir/usr/src/nitro-$pkgver/src/nitro.c"
+  install -Dm644 "$src/src/writeback.h" "$pkgdir/usr/src/nitro-$pkgver/src/writeback.h"
 
   install -Dm644 "$src/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
