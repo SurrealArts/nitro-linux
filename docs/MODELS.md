@@ -9,9 +9,11 @@
 
 ---
 
-## Candidates (read-only probe)
+## Candidates (probe entry)
 
 A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read attributes only, register a read-only hwmon class (fan tachos and whichever temperatures the firmware reports) but no LED class, platform profile or PWM channels, and reject non-read `wmi_raw` methods. Every write attribute returns `EPERM`.
+
+A maintainer can ask for a same-value write-back run with `probe_writes=1`, which exercises one SET path with the value that board just reported and restores it afterwards. It is how a write path is usually proven before the probe entry is promoted; see `docs/CONTRIBUTING.md`.
 
 | Product        | Board     | BIOS  | Probe entry                                                        | Status        |
 | -------------- | --------- | ----- | ------------------------------------------------------------------ | ------------- |
@@ -102,7 +104,7 @@ Also include:
 One cooperative owner + recorded evidence. Do not skip or reorder:
 
 1. **Report**: DMI, board, BIOS, kernel, WMI devices, current behavior
-2. **Read-only probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. Steps 3-10 are recorded after the probe entry is promoted; the probe phase only collects the baseline reads
+2. **Probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. The probe phase collects the baseline reads, and a `probe_writes=1` write-back run can prove a SET path with that board's own value before promotion
 3. **Sensors**: CPU/GPU temps and fan RPM match independent source
 4. **Fan duty**: one fan at a time; confirm RPM change, no oscillation
 5. **Fan mode**: Auto, Max, Custom accepted by EC

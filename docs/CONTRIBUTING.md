@@ -31,7 +31,7 @@ Open a **Model support report** issue and paste the output. Also include:
 
 ---
 
-## Read-only probe (candidate models)
+## Probe (candidate models)
 
 A candidate probe entry is added only after a Model Support Report is triaged, and it keeps the full `sys_vendor` + `product_name` + `board_name` triad. Current probe table:
 
@@ -67,7 +67,9 @@ channels, the platform profile, the read-only `wmi_raw` GET matrix, the APGE
 reply and its EC `0x06` cross-check, an EC register sweep run twice with a diff
 so registers that latch on read stand out, and the last nitro kernel lines. It
 exits 0 when complete, 1 when a section was unavailable and 2 when it cannot run,
-and `--no-ec-sweep` skips the 512 EC reads. Nothing in it writes.
+and `--no-ec-sweep` skips the 512 EC reads. It sends no EC writes and no WMI SET
+calls; the one side effect is the sysinfo poll (`0x05`), which sets EC `PSEE` and
+is the same call the driver makes at load.
 
 The individual reads behind it are:
 
@@ -82,7 +84,8 @@ nitro report
 Probe mode exposes read attributes for the capabilities the probe entry
 advertises; every write attribute returns `EPERM`. `fan_cpu`, `fan_gpu`,
 `fan_mode`, RGB, CoolBoost and `kbd_timeout` are all gated this way, so fan duty
-and RGB changes cannot be made or verified while `probe=1`. It registers the
+and RGB changes cannot be made or verified while `probe=1` alone, which is what
+the write-back node below is for. It registers the
 read-only hwmon class (fan tachos and whichever temperatures the firmware
 reports), but no LED class, no platform profile and no PWM channels, and it
 limits `wmi_raw` to read methods. `CAP_HWMON` still
@@ -101,12 +104,16 @@ sudo modprobe -r nitro
 sudo modprobe nitro probe=1 probe_writes=1
 ```
 
+If `deploy/install.sh --probe` already wrote `options nitro probe=1` to
+`/etc/modprobe.d/`, `modprobe` merges that with the command line, so adding
+`probe_writes=1` is enough.
+
 The node only exists with that flag (root-only, `0600`). Write a path name, then
 read the report back:
 
 ```bash
 echo fan_cpu > /sys/devices/platform/nitro/writeback
-cat              /sys/devices/platform/nitro/writeback
+cat /sys/devices/platform/nitro/writeback
 ```
 
 Supported paths: `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `kbd_timeout`,
@@ -133,12 +140,17 @@ The rules that make this safe to hand to a reporter:
   value, and no path writes a constant.
 - A path that cannot read first does not write at all, so a board whose APGE GET
   fails never receives an APGE SET through this node.
-- `coolboost` refuses unless both fans report `auto`, the same rule the normal
-  control enforces.
+- A fan path refuses when `fan_mode` reads back a value outside auto/max/custom,
+  because it could not guarantee the restore.
+- `coolboost` refuses unless the fans it can see report `auto`, the same rule the
+  normal control enforces.
 - The fan paths restore the previous fan mode, so a test leaves the machine as it
   found it. Confirm with `cat fan_mode` afterwards.
-- Run one path at a time. FTBL and CoolBoost can spin the fans up briefly while
-  the value is re-applied.
+- Run one path at a time, and stop `nitrod` first if it applies a fan profile, so
+  a timer cannot race the restore. FTBL and CoolBoost can spin the fans up briefly
+  while the value is re-applied.
+- The store returns success when the test ran; the outcome is the `result=` line,
+  so `echo fan_cpu > writeback` exits 0 even when the report says `result=error`.
 
 ---
 

@@ -68,26 +68,43 @@ def run(argv, timeout=15):
     return done.stdout.strip()
 
 
+def write_node(path, text):
+    try:
+        fd = os.open(str(path), os.O_WRONLY)
+    except OSError as e:
+        return str(e)
+    try:
+        os.write(fd, text.encode())
+    except OSError as e:
+        return str(e)
+    finally:
+        os.close(fd)
+    return None
+
+
+def read_node(path):
+    try:
+        return pathlib.Path(path).read_text().strip()
+    except OSError as e:
+        return f"error: {e}"
+
+
 def wmi_raw(payload):
     node = SYS / "wmi_raw"
     if not node.exists():
         return "(wmi_raw not present)"
-    try:
-        node.write_text(payload + "\n")
-        return node.read_text().strip()
-    except OSError as e:
-        return f"error: {e}"
+    error = write_node(node, payload + "\n")
+    return f"error: {error}" if error else read_node(node)
 
 
 def ec_read(reg):
     node = SYS / "ec_raw"
     if not node.exists():
         return "(ec_raw not present)", None
-    try:
-        node.write_text(f"0x{reg:02x}\n")
-        text = node.read_text().strip()
-    except OSError as e:
-        return f"error: {e}", None
+    error = write_node(node, f"0x{reg:02x}\n")
+    if error:
+        return f"error: {error}", None
+    text = read_node(node)
     m = re.search(r"val=0x([0-9a-f]{2})", text)
     return text, m.group(1) if m else None
 
@@ -178,12 +195,12 @@ def section_apge():
 
     node = SYS / "apge_raw"
     if node.exists():
-        try:
-            node.write_text("2 0x88401\n")
-            lines.append(f"get: {node.read_text().strip()}")
-        except OSError as e:
-            lines.append(f"get: error: {e}")
+        error = write_node(node, "2 0x88401\n")
+        if error:
+            lines.append(f"get: error: {error}")
             ok = False
+        else:
+            lines.append(f"get: {read_node(node)}")
     else:
         lines.append("apge_raw: not present in this build")
         ok = False

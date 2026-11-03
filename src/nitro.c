@@ -373,8 +373,7 @@ MODULE_PARM_DESC(disable_kbd_timeout, "Disable keyboard backlight timeout contro
 
 static bool probe_writes;
 module_param(probe_writes, bool, 0444);
-MODULE_PARM_DESC(probe_writes,
-	"Allow same-value write-back tests on unverified models");
+MODULE_PARM_DESC(probe_writes, "Enable the same-value write-back probe node");
 
 struct nitro_device;
 
@@ -1885,8 +1884,15 @@ static int writeback_fan(
 	u8 duty = 0, cpu = 0, gpu = 0, back_cpu = 0, back_gpu = 0;
 	int ret, err = 0, back = 0;
 
-	if (which == NITRO_FAN_GPU && nitro->quirks->fan_count < 2)
+	if (!nitro->quirks->fan_count) {
+		writeback_line(buf, size, pos, "skip: this model reports no fan\n");
 		return -ENODEV;
+	}
+	if (which == NITRO_FAN_GPU && nitro->quirks->fan_count < 2) {
+		writeback_line(buf, size, pos,
+			"skip: this model reports one fan\n");
+		return -ENODEV;
+	}
 
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
@@ -1898,6 +1904,16 @@ static int writeback_fan(
 	}
 	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
+	if (
+		cpu < NITRO_FAN_MODE_AUTO || cpu > NITRO_FAN_MODE_CUSTOM ||
+		(nitro->quirks->fan_count >= 2 &&
+			(gpu < NITRO_FAN_MODE_AUTO || gpu > NITRO_FAN_MODE_CUSTOM))) {
+		writeback_line(buf, size, pos,
+			"skip: fan_mode read as cpu=%u gpu=%u, not a known mode\n",
+			cpu, gpu);
+		err = -EINVAL;
+		goto out;
+	}
 	ret = nitro_get_fan(which, &duty);
 	if (ret) {
 		writeback_line(buf, size, pos, "read fan_%s failed %d\n",
@@ -1976,6 +1992,11 @@ static int writeback_fan_mode(
 	u8 cpu = 0, gpu = 0, back_cpu = 0, back_gpu = 0;
 	int ret, err = 0;
 
+	if (!nitro->quirks->fan_count) {
+		writeback_line(buf, size, pos, "skip: this model reports no fan\n");
+		return -ENODEV;
+	}
+
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
 	if (ret) {
@@ -1986,6 +2007,16 @@ static int writeback_fan_mode(
 	}
 	writeback_line(buf, size, pos, "read fan_mode cpu=%s gpu=%s\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu));
+	if (
+		cpu < NITRO_FAN_MODE_AUTO || cpu > NITRO_FAN_MODE_CUSTOM ||
+		(nitro->quirks->fan_count >= 2 &&
+			(gpu < NITRO_FAN_MODE_AUTO || gpu > NITRO_FAN_MODE_CUSTOM))) {
+		writeback_line(buf, size, pos,
+			"skip: fan_mode read as cpu=%u gpu=%u, not a known mode\n",
+			cpu, gpu);
+		err = -EINVAL;
+		goto out;
+	}
 	ret = nitro_set_fan_behavior(bitmap, cpu, gpu);
 	writeback_line(buf, size, pos, "set fan_mode cpu=%s gpu=%s ret=%d\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu), ret);
@@ -2090,7 +2121,7 @@ static int writeback_coolboost(
 	size_t size,
 	size_t *pos)
 {
-	u8 value = 0;
+	u8 value = 0, cpu = 0, gpu = 0;
 	int ret, err = 0;
 
 	mutex_lock(&nitro->lock);
@@ -2101,7 +2132,13 @@ static int writeback_coolboost(
 		goto out;
 	}
 	writeback_line(buf, size, pos, "read coolboost=%u\n", value);
-	ret = nitro_fans_auto();
+	if (nitro->quirks->fan_count >= 2) {
+		ret = nitro_fans_auto();
+	} else {
+		ret = nitro_get_fan_behavior(NITRO_FANBIT_CPU, &cpu, &gpu);
+		if (!ret && cpu != NITRO_FAN_MODE_AUTO)
+			ret = -EPERM;
+	}
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"skip coolboost: fans are not auto\n");
@@ -2147,6 +2184,7 @@ static ssize_t writeback_store(
 	char report[NITRO_WRITEBACK_REPORT_MAX];
 	char *p = work, *path;
 	size_t pos = 0;
+	bool usage = false;
 	int ret;
 
 	if (!nitro)
@@ -2162,6 +2200,18 @@ static ssize_t writeback_store(
 		return -EINVAL;
 
 	writeback_line(report, sizeof(report), &pos, "path=%s\n", path);
+	if (p) {
+		while (*p == ' ' || *p == '\t' || *p == '\n')
+			p++;
+	}
+	if (p && *p) {
+		writeback_line(report, sizeof(report), &pos,
+			"this node takes a path name, not a value\n");
+		usage = true;
+		ret = -EINVAL;
+		goto done;
+	}
+
 	if (!strcmp(path, "fan_cpu"))
 		ret = writeback_fan(nitro, NITRO_FAN_CPU, report, sizeof(report),
 			&pos);
@@ -2177,23 +2227,22 @@ static ssize_t writeback_store(
 	else if (!strcmp(path, "coolboost"))
 		ret = writeback_coolboost(nitro, report, sizeof(report), &pos);
 	else {
-		writeback_line(report, sizeof(report), &pos,
-			"result=error ret=-22\n");
-		writeback_line(report, sizeof(report), &pos,
-			"paths=fan_cpu fan_gpu fan_mode ftbl kbd_timeout coolboost\n");
-		mutex_lock(&nitro->lock);
-		memcpy(nitro->writeback_report, report, pos + 1);
-		mutex_unlock(&nitro->lock);
-		return -EINVAL;
+		writeback_line(report, sizeof(report), &pos, "unknown path\n");
+		usage = true;
+		ret = -EINVAL;
 	}
 
+done:
+	if (usage)
+		writeback_line(report, sizeof(report), &pos,
+			"paths=fan_cpu fan_gpu fan_mode ftbl kbd_timeout coolboost\n");
 	writeback_line(report, sizeof(report), &pos, "result=%s ret=%d\n",
 		ret ? "error" : "ok", ret);
 	mutex_lock(&nitro->lock);
 	memcpy(nitro->writeback_report, report, pos + 1);
 	mutex_unlock(&nitro->lock);
 	pr_info_ratelimited("writeback %s %s\n", path, ret ? "failed" : "ok");
-	return count;
+	return usage ? -EINVAL : count;
 }
 static DEVICE_ATTR(writeback, 0600, writeback_show, writeback_store);
 

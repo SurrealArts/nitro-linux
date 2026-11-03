@@ -103,11 +103,11 @@ body:
       options:
         - label: "I have not force-loaded the module with modprobe -f or insmod"
           required: true
-        - label: "I have not written raw EC/WMI registers"
+        - label: "I have not written EC values or sent WMI SET calls (the read-only survey nodes do not count)"
           required: true
         - label: "I understand that a local DMI or source patch is not upstream support, and I have disclosed any such patch under Observed Behavior"
           required: true
-        - label: "I understand my model is unverified and probe mode is read-only"
+        - label: "I understand my model is unverified, and probe mode only reads unless a maintainer asks for a same-value write-back run"
           required: true
 
   - type: markdown
