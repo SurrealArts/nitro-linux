@@ -55,7 +55,21 @@ sudo modprobe -r nitro 2>/dev/null || true
 sudo modprobe nitro probe=1
 ```
 
-Then collect the read-only evidence:
+Then collect the read-only evidence in one block:
+
+```bash
+sudo python3 tools/probe_survey.py > survey.txt
+```
+
+It prints a markdown block to paste into the report: DMI, module version and
+parameters, the WMI device list, every typed attribute, the nitro hwmon
+channels, the platform profile, the read-only `wmi_raw` GET matrix, the APGE
+reply and its EC `0x06` cross-check, an EC register sweep run twice with a diff
+so registers that latch on read stand out, and the last nitro kernel lines. It
+exits 0 when complete, 1 when a section was unavailable and 2 when it cannot run,
+and `--no-ec-sweep` skips the 512 EC reads. Nothing in it writes.
+
+The individual reads behind it are:
 
 ```bash
 cat /sys/devices/platform/nitro/capabilities

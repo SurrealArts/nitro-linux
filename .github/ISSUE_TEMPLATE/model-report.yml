@@ -90,8 +90,8 @@ body:
     id: probe-output
     attributes:
       label: "Probe Output (optional)"
-      description: "Only fill this if a maintainer has triaged your report, added a candidate probe entry, and requested probe output"
-      placeholder: "sudo modprobe nitro probe=1; cat /sys/devices/platform/nitro/capabilities"
+      description: "Only fill this if a maintainer has triaged your report, added a candidate probe entry, and requested probe output. Paste the block from the survey command below if you can run it"
+      placeholder: "sudo python3 tools/probe_survey.py"
     validations:
       required: false
 
