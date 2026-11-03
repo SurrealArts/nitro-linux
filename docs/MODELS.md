@@ -103,7 +103,7 @@ Also include:
 
 One cooperative owner + recorded evidence. Do not skip or reorder:
 
-1. **Report**: DMI, board, BIOS, kernel, WMI devices, current behavior
+1. **Report**: DMI, board, BIOS, kernel, WMI devices, current behavior — the survey block from `tools/probe_survey.py` covers most of it
 2. **Probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. The probe phase collects the baseline reads, and a `probe_writes=1` write-back run can prove a SET path with that board's own value before promotion
 3. **Sensors**: CPU/GPU temps and fan RPM match independent source
 4. **Fan duty**: one fan at a time; confirm RPM change, no oscillation

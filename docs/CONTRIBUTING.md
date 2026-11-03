@@ -152,13 +152,29 @@ The rules that make this safe to hand to a reporter:
 - The store returns success when the test ran; the outcome is the `result=` line,
   so `echo fan_cpu > writeback` exits 0 even when the report says `result=error`.
 
+### Adding a probe entry (maintainers)
+
+- `src/nitro.c`: a quirks struct with read capabilities only, and a row in
+  `nitro_probe_dmi[]` matching the full vendor/product/board triad.
+  `nitro_validate_probe_quirks()` rejects `COOLBOOST`, `PLATFORM_PROFILE`,
+  `LED_CLASS` and `KBD_TIMEOUT` and requires the `NONE` backends, so a probe
+  entry cannot advertise a write path.
+- `docs/MODELS.md`: a Candidates row with the expected reads and status
+  `probe shipped`. `tools/check_models.py` fails when the two tables disagree.
+- Run `python3 tools/check_models.py` and `make test`.
+- Then ask for the survey block before proposing any capability change.
+
+A capability moves into the quirks struct only with its evidence: reads from the
+survey, and for a SET path a passing `probe_writes=1` write-back run on that
+board. A sibling model is not evidence for a write path.
+
 ---
 
 ## What happens next
 
 1. Your report goes into the Candidates table in `docs/MODELS.md`
 2. After triage we may add a **read-only probe** entry for your model; you run it with `probe=1`
-3. You collect read evidence: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads. Nothing is written in this phase — write attributes return `EPERM`
+3. You collect read evidence with `sudo python3 tools/probe_survey.py`: EC temperature, fan tachos and duty, fan mode, current RGB/lighting state, `wmi_raw` reads, the EC register sweep and the kernel log. Nothing is written in this phase — write attributes return `EPERM`
 4. If the reads are sane, the write paths are verified one at a time (fan duty → fan mode → profile → RGB → effects → CoolBoost → keyboard timeout), with the maintainer in the loop. For most of them this is a `probe_writes=1` write-back run: the module writes that model's own read-back value and reports whether the SET was accepted
 5. With recorded evidence, the model gets a verified quirk entry and moves to **Verified**
 
@@ -200,6 +216,26 @@ sudo modprobe -r nitro   # restores saved state on verified model
 ```
 
 If unload fails or the machine overheats, power off and let it cool. Do not write more EC values to recover.
+
+---
+
+## Working on the driver
+
+```bash
+make            # build against the running kernel
+make test       # guard checks, no hardware and no kernel headers needed
+make install    # load the freshly built module
+```
+
+The write-back decisions live in `src/writeback.h`: whether a model gets a fan
+path at all, whether a fan switch may run when `fan_mode` reads back something
+unexpected, and whether CoolBoost may be touched outside `auto`. The module and
+`tools/test_writeback_guards.c` include the same header, so `make test` exercises
+the predicates the driver actually runs. A new guard belongs in that header with
+a row in the test; the CI `guards` job runs the same target.
+
+The WMI traffic, the restore order and the lines around them can only be checked
+on hardware — `make test` covers the decisions, not the calls.
 
 ---
 
