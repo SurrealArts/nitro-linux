@@ -19,7 +19,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                               |
 | 0x13 | GET | fan-table byte                                                                                                                            |
 | 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
-| 0x15 | GET | 16B effect state (shifted by one leading zero byte; driver checks status byte at offset 0)                                                |
+| 0x15 | GET | 16B effect state: `[status, mode, speed, brightness, x, dir, R, G, B, ...]` (`BHLK[0]` is the ACPI status; the Acer WMI class strips it from `gmOutput`) |
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies; used only by the OPMS profile backend and the write-back probe) |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
@@ -43,9 +43,11 @@ GPU temperature (`0x0A`). At idle `0x01` read 83 °C, `0x03` 74 °C and `0x0A`
 this command as step 1 of the static-lighting enable sequence, so the bitmap
 costs no extra call at probe.
 
-The bitmap is read once at load and hides the hwmon channels the firmware does
-not report. A zero bitmap falls back to the quirk's `fan_count` and the single
-CPU temperature.
+The bitmap is read at load, with a short retry because a cold boot can reach the
+module before the EC answers the first WMI call. It hides the hwmon channels the
+firmware does not report. If the bitmap read still fails, all three temperature
+channels stay visible: `temp2` is the only GPU temperature source when the
+NVIDIA driver is not loaded, and a missing sensor simply returns a read error.
 
 | hwmon attribute                            | Channel               | Source         |
 | ------------------------------------------ | --------------------- | -------------- |
@@ -122,8 +124,13 @@ Notable findings:
   5 performance, 6 low-power. `acer-wmi` uses the same selector and value space
   for its V4 thermal profile.
 - Effect modes 1-5 (breath, neon, wave, shifting, zoom) light the keyboard.
-- AN515-58 (`Jimny_ADH`) returns an all-zero `0x15` payload, so dynamic
-  effects stay disabled there; the static path works.
+- AN515-58 (`Jimny_ADH`) returns an all-zero `0x15` payload at boot, so there is
+  no same value to write back. A `0x14` mode-1 write was accepted, but the next
+  `0x15` GET failed the status check and the keyboard did not visibly change.
+  The write-back now prints the raw reply even on that failure, and enables the
+  static path (the `0x02` zones-on command) first, because the effect can be
+  stored while the LED controller is still off. Dynamic effects stay disabled
+  until the raw reply and a visible effect confirm the path.
 - Static zones (mode `0 = KBLE`):
     - a bare `0x14` with mode 0 blanks the backlight.
     - Mode 0 only displays after the enable sequence:
@@ -131,5 +138,5 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `writeback` is the opt-in same-value write-back probe for unverified boards (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `opms` (`0x17` selector `0x0B`, written through `0x16`), `kbd_timeout` (APGE SET then GET) and `coolboost` (EC `0x10`) work the same way. `kbd_static` is the exception: it reads the four zone colours, writes their bitwise inverse through the static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then restores the originals, because a same-value colour write cannot distinguish a working path from firmware that ignores writes. The node takes a path name, not a value, so every byte it writes was read from that board first and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
+- `writeback` is the opt-in same-value write-back probe for unverified boards (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `opms` (`0x17` selector `0x0B`, written through `0x16`), `kbd_timeout` (APGE SET then GET) and `coolboost` (EC `0x10`) work the same way. `kbd_static` is the first exception: it reads the four zone colours, writes their bitwise inverse through the static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then restores the originals, because a same-value colour write cannot distinguish a working path from firmware that ignores writes. `kbd_dynamic` is the second: when `0x15` reports no effect state there is no same value to write, so it first enables the static path (`0x02` zones-on, the current zone colours and brightness), then writes a known effect (mode 1, red), reads `0x15` back and restores the static colours; it is a visual test, not a promotion. The node takes a path name, not a value, so every byte it writes was read from that board first — except the known effect used by `kbd_dynamic` — and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
 - `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected, but the selector bytes are not validated: `0x05` and `0x17` can have firmware side effects and some `0x17` selectors are refused by the typed attributes. Treat `wmi_raw` as a root-only engineering escape hatch, not a guaranteed read-only path.

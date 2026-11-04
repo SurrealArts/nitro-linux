@@ -22,7 +22,7 @@ No probe candidates at present.
 
 - **AN515-58** uses OPMS (`GET/SET_MISC` selector `0x0B`) for the platform profile; FTBL reads on that board but does not track the active profile (it read 0 after `acer-wmi` set `performance`). The board reports fan mode 0 at boot while the fans are auto, so its quirk sets `fan_mode_zero_auto`. Static RGB is four zones; dynamic effects stay off because `0x15` returns all zeros, and CoolBoost stays off because EC `0x10` never moved.
 
-Escalating a probe entry (for example enabling `dyn`) requires the previous probe output and a passing `writeback` for each write path being enabled: `ftbl` or `opms` for the platform profile, `kbd_timeout` for the APGE path, `kbd_static` for static RGB, and direct EC evidence for CoolBoost.
+Escalating a probe entry (for example enabling `dyn`) requires the previous probe output and a passing `writeback` for each write path being enabled: `ftbl` or `opms` for the platform profile, `kbd_timeout` for the APGE path, `kbd_static` for static RGB, `kbd_dynamic` plus a confirmed visible effect for dynamic RGB, and direct EC evidence for CoolBoost.
 
 ---
 

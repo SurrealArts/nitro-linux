@@ -971,9 +971,9 @@ static int nitro_get_dynamic_raw(u8 *data16)
 
 	if (ret)
 		return ret;
+	memcpy(data16, out, sizeof(out));
 	if (out[0] != 0)
 		return -EPROTO;
-	memcpy(data16, out, sizeof(out));
 	return 0;
 }
 
@@ -2221,6 +2221,84 @@ out:
 	return err;
 }
 
+static int writeback_kbd_dynamic(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 orig[NITRO_MAX_ZONES][3];
+	u8 effect[16] = { 0 };
+	u8 back[16] = { 0 };
+	unsigned int i, nzones = nitro_zone_count(nitro);
+	int ret, err = 0;
+
+	if (!nitro_has_cap(nitro, NITRO_CAP_RGB) || !nzones) {
+		writeback_line(buf, size, pos,
+			"skip: this model reports no RGB\n");
+		return -ENODEV;
+	}
+
+	mutex_lock(&nitro->lock);
+	for (i = 0; i < nzones; i++) {
+		ret = nitro_get_static(
+			nitro_zone_ids[i],
+			&orig[i][0], &orig[i][1], &orig[i][2]);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"read zone%u failed %d\n", i + 1, ret);
+			err = ret;
+			goto out;
+		}
+	}
+
+	ret = nitro_apply_static(nitro, orig, 100);
+	writeback_line(buf, size, pos, "enable static path ret=%d\n", ret);
+	if (ret) {
+		err = ret;
+		goto restore;
+	}
+
+	nitro_build_effect(effect, 1, 4, 100, 1, 255, 0, 0);
+	writeback_line(buf, size, pos,
+		"set effect mode=1 speed=4 bright=100 dir=1 rgb=255 0 0\n");
+	ret = nitro_set_dynamic_raw(effect);
+	writeback_line(buf, size, pos, "set effect ret=%d\n", ret);
+	if (ret) {
+		err = ret;
+		goto restore;
+	}
+
+	ret = nitro_get_dynamic_raw(back);
+	writeback_line(buf, size, pos,
+		"verify dyn=%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
+		back[0], back[1], back[2], back[3],
+		back[4], back[5], back[6], back[7],
+		back[8], back[9], back[10], back[11],
+		back[12], back[13], back[14], back[15]);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"verify dyn failed %d (status byte %u)\n",
+			ret, back[0]);
+	} else {
+		writeback_line(buf, size, pos,
+			"verify mode=%u speed=%u bright=%u dir=%u rgb=%u %u %u\n",
+			back[1], back[2], back[3], back[5],
+			back[6], back[7], back[8]);
+	}
+
+	msleep(1500);
+
+restore:
+	ret = nitro_apply_static(nitro, orig, 100);
+	writeback_line(buf, size, pos, "restore static ret=%d\n", ret);
+	if (ret && !err)
+		err = ret;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
 static int writeback_kbd_timeout(
 	struct nitro_device *nitro,
 	char *buf,
@@ -2373,6 +2451,8 @@ static ssize_t writeback_store(
 		ret = writeback_kbd_timeout(nitro, report, sizeof(report), &pos);
 	else if (!strcmp(path, "kbd_static"))
 		ret = writeback_kbd_static(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "kbd_dynamic"))
+		ret = writeback_kbd_dynamic(nitro, report, sizeof(report), &pos);
 	else if (!strcmp(path, "coolboost"))
 		ret = writeback_coolboost(nitro, report, sizeof(report), &pos);
 	else {
@@ -2384,7 +2464,7 @@ static ssize_t writeback_store(
 done:
 	if (usage)
 		writeback_line(report, sizeof(report), &pos,
-			"paths=fan_cpu fan_gpu fan_mode ftbl opms kbd_timeout kbd_static coolboost\n");
+			"paths=fan_cpu fan_gpu fan_mode ftbl opms kbd_timeout kbd_static kbd_dynamic coolboost\n");
 	writeback_line(report, sizeof(report), &pos, "result=%s ret=%d\n",
 		ret ? "error" : "ok", ret);
 	mutex_lock(&nitro->lock);

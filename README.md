@@ -198,7 +198,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `/sys/class/leds/nitro:rgb:zone*`: LED class devices for the keyboard zones (up to four).
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`-`temp3`) and `coretemp` package temperature when present. `pwm1`/`pwm2` with `pwm1_enable`/`pwm2_enable` provide standard fan control for `sensors` and `fancontrol`; only the sensors the firmware reports are created.
 - `apge_raw`: root-only read of the keyboard-backlight APGE interface, `echo "2 0x88401" > apge_raw` then read it back; writes are refused.
-- `writeback`: only present with `probe_writes=1`; `echo <path> > writeback` runs a write-back test for `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `opms`, `kbd_timeout`, `kbd_static` or `coolboost`, and reading the node returns the report. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+- `writeback`: only present with `probe_writes=1`; `echo <path> > writeback` runs a write-back test for `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `opms`, `kbd_timeout`, `kbd_static`, `kbd_dynamic` or `coolboost`, and reading the node returns the report. `kbd_dynamic` is a visual effect test, not a same-value write-back. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
 - `/sys/class/power_supply/*/online`: AC/battery state that selects `profile_ac` or `profile_battery`.
 - `/dev/input/by-path/platform-i8042-serio-0-event-kbd`: keyboard event device used by `nitro key`.

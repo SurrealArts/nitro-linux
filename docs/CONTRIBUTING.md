@@ -141,15 +141,21 @@ cat /sys/devices/platform/nitro/writeback
 ```
 
 Supported paths: `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `opms`,
-`kbd_timeout`, `kbd_static`, `coolboost`. Each one reads the current value,
-writes that exact value back, re-reads it, and restores the mode it had to
-switch — the fan paths go through `custom` like the normal control and put the
-previous mode back afterwards. `kbd_static` is the exception: it reads the four
-zone colours, writes their bitwise inverse through the full static path (`0x02`
-zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then
-restores the original colours, because a same-value colour write cannot
-distinguish a working path from firmware that ignores writes. A report from an
-AN515-57:
+`kbd_timeout`, `kbd_static`, `kbd_dynamic`, `coolboost`. Each one reads the
+current value, writes that exact value back, re-reads it, and restores the mode
+it had to switch — the fan paths go through `custom` like the normal control and
+put the previous mode back afterwards. `kbd_static` is the first exception: it
+reads the four zone colours, writes their bitwise inverse through the full
+static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the
+read-back, then restores the original colours, because a same-value colour write
+cannot distinguish a working path from firmware that ignores writes.
+`kbd_dynamic` is the second exception: when `0x15` reports no effect state there
+is no same value to write, so it first enables the static path (`0x02` zones-on,
+the current zone colours and brightness), then writes a known effect (mode 1,
+red), reads `0x15` back, and restores the static colours. The report prints the
+raw reply even when the `0x15` status byte is non-zero. It is a visual test, not
+a promotion by itself; the reporter has to confirm the keyboard changed. A
+report from an AN515-57:
 
 ```text
 path=fan_cpu
@@ -166,7 +172,9 @@ result=ok ret=0
 The rules that make this safe to hand to a reporter:
 
 - The value always comes from a read on that model. Nothing here accepts a typed
-  value, and no path writes a constant.
+  value. The two visual tests are the exceptions: `kbd_static` writes the
+  inverse of the colours it read, and `kbd_dynamic` writes a known effect when
+  the board reports no effect state; both restore the previous static colours.
 - A path that cannot read first does not write at all, so a board whose APGE GET
   fails never receives an APGE SET through this node.
 - A fan path refuses when `fan_mode` reads back a value outside auto/max/custom,
