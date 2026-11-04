@@ -1053,9 +1053,16 @@ class UI:
                     result = subprocess.run(
                         ["lspci"], capture_output=True, text=True, timeout=2)
                     for line in result.stdout.splitlines():
-                        has_vga = "VGA" in line
-                        has_nvidia = "NVIDIA" in line or "GeForce" in line
-                        if has_vga and has_nvidia:
+                        has_gpu = (
+                            "VGA" in line or
+                            "3D controller" in line or
+                            "Display controller" in line
+                        )
+                        has_nvidia = (
+                            "NVIDIA" in line or "GeForce" in line or
+                            "Quadro" in line
+                        )
+                        if has_gpu and has_nvidia:
                             has_brackets = "[" in line and "]" in line
                             if has_brackets:
                                 name = line.split("[", 1)[1].split("]", 1)[0].strip()

@@ -164,6 +164,18 @@ _gpu_temp_val = None
 GPU_TEMP_TTL = 2.0
 
 
+def drm_gpu_temp():
+    for card in sorted(glob("/sys/class/drm/card[0-9]*")):
+        vendor = read(os.path.join(card, "device", "vendor"))
+        if vendor not in ("0x10de", "0x1002"):
+            continue
+        for hw in sorted(glob(os.path.join(card, "device", "hwmon", "hwmon*"))):
+            t = read(os.path.join(hw, "temp1_input"))
+            if t and t.lstrip("-").isdigit():
+                return int(t) / 1000.0
+    return None
+
+
 def nvidia_temp():
     global _gpu_temp_ts, _gpu_temp_val
     now = time.time()
@@ -246,13 +258,22 @@ def snapshot():
     if d.get("package_c") is None:
         d["package_c"] = d.get("ec_c")
     gpu_temp = None
-    nv_hwmon = hwmon_find("nvidia") or hwmon_find("nouveau")
-    if nv_hwmon:
-        t = read(f"{nv_hwmon}/temp1_input")
+    for name in ("nvidia", "nouveau", "amdgpu"):
+        gpu_hwmon = hwmon_find(name)
+        if not gpu_hwmon:
+            continue
+        t = read(f"{gpu_hwmon}/temp1_input")
         if t and t.lstrip("-").isdigit():
             gpu_temp = int(t) / 1000.0
+            break
+    if gpu_temp is None:
+        gpu_temp = drm_gpu_temp()
     if gpu_temp is None:
         gpu_temp = nvidia_temp()
+    if gpu_temp is None and n:
+        t = read(f"{n}/temp2_input")
+        if t and t.lstrip("-").isdigit():
+            gpu_temp = int(t) / 1000.0
     d["gpu_c"] = gpu_temp
     has_fan_data = has_fan and d.get("fan_cpu_duty") is not None
     has_hwmon_data = has_hwmon and n

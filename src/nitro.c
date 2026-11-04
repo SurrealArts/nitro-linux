@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/minmax.h>
 #include <linux/dmi.h>
+#include <linux/delay.h>
 #include <linux/acpi.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
@@ -710,8 +711,14 @@ static int nitro_get_sensor(u8 sensor, unsigned int *value)
 static void nitro_read_sensors(struct nitro_device *nitro)
 {
 	u8 out[8] = { 0 };
+	unsigned int i;
 
-	if (nitro_get_sysinfo_full(0, 0, out))
+	for (i = 0; i < 5; i++) {
+		if (!nitro_get_sysinfo_full(0, 0, out))
+			break;
+		msleep(100);
+	}
+	if (i == 5)
 		return;
 	nitro->sensors = (u16)(out[3] | (out[4] << 8));
 	nitro->have_sensors = nitro->sensors != 0;
@@ -2591,8 +2598,6 @@ static umode_t nitro_hwmon_is_visible(
 		return 0444;
 	case hwmon_temp:
 		if (attr != hwmon_temp_input || channel >= NITRO_TEMP_CHANNELS)
-			break;
-		if (!nitro->have_sensors && channel)
 			break;
 		if (!nitro_sensor_present(nitro, nitro_temp_sensor[channel]))
 			break;
