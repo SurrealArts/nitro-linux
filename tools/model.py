@@ -18,6 +18,7 @@ CAP_KBD_TIMEOUT = 1 << 8
 
 PROFILE_NONE = 0
 PROFILE_FTBL = 1
+PROFILE_OPMS = 2
 
 COOLBOOST_NONE = 0
 COOLBOOST_EC10 = 1
@@ -46,8 +47,11 @@ class NitroQuirks:
             caps["fan_mode"] = 1
         if self.has_cap(CAP_HWMON):
             caps["hwmon"] = 1
-        if self.has_cap(CAP_PLATFORM_PROFILE) and self.profile_backend == PROFILE_FTBL:
-            caps["profile"] = "ftbl"
+        if self.has_cap(CAP_PLATFORM_PROFILE):
+            if self.profile_backend == PROFILE_FTBL:
+                caps["profile"] = "ftbl"
+            elif self.profile_backend == PROFILE_OPMS:
+                caps["profile"] = "opms"
         if self.has_cap(CAP_RGB):
             caps["rgb"] = self.rgb_zones
         if self.has_cap(CAP_RGB_DYNAMIC):
@@ -117,7 +121,7 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
     led = caps.get("led") == "1"
     kbd_timeout = caps.get("kbd_timeout") == "1"
 
-    if profile not in (None, "ftbl"):
+    if profile not in (None, "ftbl", "opms"):
         return UNKNOWN_QUIRKS
     if coolboost not in (None, "ec10"):
         return UNKNOWN_QUIRKS
@@ -157,6 +161,7 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
         dynamic_effects=dyn,
         profile_backend=(
             PROFILE_NONE if not profile
+            else PROFILE_OPMS if profile == "opms"
             else PROFILE_FTBL
         ),
         coolboost_backend=(

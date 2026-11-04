@@ -206,7 +206,8 @@ def snapshot():
     if QUIRKS.has_cap(CAP_KBD_TIMEOUT):
         d["kbd_timeout"] = read(f"{SYS}/kbd_timeout")
     if has_profile:
-        d["ftbl"] = read(f"{SYS}/ftbl")
+        if os.path.exists(f"{SYS}/ftbl"):
+            d["ftbl"] = read(f"{SYS}/ftbl")
         d["profile"] = read(PP) if PP else None
     if os.path.exists(f"{SYS}/tkst"):
         d["tkst"] = read(f"{SYS}/tkst")

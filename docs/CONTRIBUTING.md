@@ -1,6 +1,6 @@
 # Contributing a model report
 
-This project supports verified models: **AN515-57** (Scala_TLS / BIOS V1.22) and **AN515-45** (Scala_CAS / BIOS V1.14).
+This project supports verified models: **AN515-57** (Scala_TLS / BIOS V1.22), **AN515-45** (Scala_CAS / BIOS V1.14), and **AN515-58** (Jimny_ADH / BIOS V2.21).
 Adding another model is not a config change — it requires evidence and code.
 
 If you want your Nitro/Predator supported, the most valuable thing you can do
@@ -140,11 +140,16 @@ echo fan_cpu > /sys/devices/platform/nitro/writeback
 cat /sys/devices/platform/nitro/writeback
 ```
 
-Supported paths: `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `kbd_timeout`,
-`coolboost`. Each one reads the current value, writes that exact value back,
-re-reads it, and restores the mode it had to switch — the fan paths go through
-`custom` like the normal control and put the previous mode back afterwards. A
-report from an AN515-57:
+Supported paths: `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `opms`,
+`kbd_timeout`, `kbd_static`, `coolboost`. Each one reads the current value,
+writes that exact value back, re-reads it, and restores the mode it had to
+switch — the fan paths go through `custom` like the normal control and put the
+previous mode back afterwards. `kbd_static` is the exception: it reads the four
+zone colours, writes their bitwise inverse through the full static path (`0x02`
+zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then
+restores the original colours, because a same-value colour write cannot
+distinguish a working path from firmware that ignores writes. A report from an
+AN515-57:
 
 ```text
 path=fan_cpu
@@ -171,8 +176,8 @@ The rules that make this safe to hand to a reporter:
 - The fan paths restore the previous fan mode, so a test leaves the machine as it
   found it. Confirm with `cat fan_mode` afterwards.
 - Run one path at a time, and stop `nitrod` first if it applies a fan profile, so
-  a timer cannot race the restore. FTBL and CoolBoost can spin the fans up briefly
-  while the value is re-applied.
+  a timer cannot race the restore. FTBL, OPMS, and CoolBoost can spin the fans up
+  briefly while the value is re-applied.
 - The store returns success when the test ran; the outcome is the `result=` line,
   so `echo fan_cpu > writeback` exits 0 even when the report says `result=error`.
 

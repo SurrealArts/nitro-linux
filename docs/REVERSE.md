@@ -20,7 +20,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x13 | GET | fan-table byte                                                                                                                            |
 | 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
 | 0x15 | GET | 16B effect state (shifted by one leading zero byte; driver checks status byte at offset 0)                                                |
-| 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies — not written by this driver)                           |
+| 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies; used only by the OPMS profile backend and the write-back probe) |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
 ### Sensors (sysinfo 0x05)
@@ -115,7 +115,15 @@ Notable findings:
     - 2 balanced-performance
     - 3 performance
     - 4 eco
+- AN515-58 (`Jimny_ADH`) does not use FTBL for the platform profile. FTBL read
+  0 after a profile change through `acer-wmi` and 1 after NitroSense had run, so
+  it does not track the active profile. That board uses OPMS (`GET/SET_MISC`
+  selector `0x0B`) instead: 0 quiet, 1 balanced, 4 balanced-performance,
+  5 performance, 6 low-power. `acer-wmi` uses the same selector and value space
+  for its V4 thermal profile.
 - Effect modes 1-5 (breath, neon, wave, shifting, zoom) light the keyboard.
+- AN515-58 (`Jimny_ADH`) returns an all-zero `0x15` payload, so dynamic
+  effects stay disabled there; the static path works.
 - Static zones (mode `0 = KBLE`):
     - a bare `0x14` with mode 0 blanks the backlight.
     - Mode 0 only displays after the enable sequence:
@@ -123,5 +131,5 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `writeback` is the opt-in same-value write-back probe for unverified boards (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `kbd_timeout` (APGE SET then GET) and `coolboost` (EC `0x10`) work the same way. The node takes a path name, not a value, so every byte it writes was read from that board first and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
+- `writeback` is the opt-in same-value write-back probe for unverified boards (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `opms` (`0x17` selector `0x0B`, written through `0x16`), `kbd_timeout` (APGE SET then GET) and `coolboost` (EC `0x10`) work the same way. `kbd_static` is the exception: it reads the four zone colours, writes their bitwise inverse through the static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then restores the originals, because a same-value colour write cannot distinguish a working path from firmware that ignores writes. The node takes a path name, not a value, so every byte it writes was read from that board first and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
 - `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected, but the selector bytes are not validated: `0x05` and `0x17` can have firmware side effects and some `0x17` selectors are refused by the typed attributes. Treat `wmi_raw` as a root-only engineering escape hatch, not a guaranteed read-only path.

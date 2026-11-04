@@ -6,7 +6,6 @@
  *   verified models:
  *     - AN515-57 (Scala_TLS)
  *     - AN515-45 (Scala_CAS)
- *   probe candidate models:
  *     - AN515-58 (Jimny_ADH)
  *
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
@@ -45,7 +44,9 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 
 #define NITRO_WMI_GUID				"7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
 #define NITRO_APGE_GUID				"61EF69EA-865C-4BC3-A502-A0DEBA0CB531"
-#define NITRO_EC_COOLBOOST 0x10
+#define NITRO_EC_COOLBOOST			0x10
+#define NITRO_MISC_TKST				0x01
+#define NITRO_MISC_OPMS				0x0B
 
 #define NITRO_APGE_SET				0x01
 #define NITRO_APGE_GET				0x02
@@ -115,9 +116,18 @@ enum nitro_ftbl {
 	NITRO_FTBL_ECO				= 0x04,
 };
 
+enum nitro_opms {
+	NITRO_OPMS_QUIET			= 0x00,
+	NITRO_OPMS_BALANCED			= 0x01,
+	NITRO_OPMS_BALANCED_PERFORMANCE		= 0x04,
+	NITRO_OPMS_PERFORMANCE			= 0x05,
+	NITRO_OPMS_LOW_POWER			= 0x06,
+};
+
 enum nitro_profile_backend {
 	NITRO_PROFILE_NONE			= 0,
 	NITRO_PROFILE_FTBL			= 1,
+	NITRO_PROFILE_OPMS			= 2,
 };
 
 enum nitro_coolboost_backend {
@@ -133,6 +143,7 @@ struct nitro_quirks {
 	u8 coolboost_backend;
 	u8 fan_count;
 	bool has_misc;
+	bool fan_mode_zero_auto;
 	const char *board;
 	const char *tested_bios;
 };
@@ -153,15 +164,17 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.tested_bios = "V1.22",
 };
 
-static const struct nitro_quirks nitro_quirks_an515_58_probe = {
+static const struct nitro_quirks nitro_quirks_an515_58 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
-			NITRO_CAP_HWMON | NITRO_CAP_RGB,
+			NITRO_CAP_HWMON | NITRO_CAP_PLATFORM_PROFILE |
+			NITRO_CAP_RGB | NITRO_CAP_KBD_TIMEOUT,
 	.rgb_zones = 4,
 	.dynamic_effects = 0,
-	.profile_backend = NITRO_PROFILE_NONE,
+	.profile_backend = NITRO_PROFILE_OPMS,
 	.coolboost_backend = NITRO_COOLBOOST_NONE,
 	.fan_count = 2,
 	.has_misc = true,
+	.fan_mode_zero_auto = true,
 	.board = "Jimny_ADH",
 	.tested_bios = "V2.21",
 };
@@ -292,14 +305,22 @@ static int nitro_validate_quirks(const struct nitro_quirks *q)
 
 	if (
 		(q->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
-		q->profile_backend != NITRO_PROFILE_FTBL) {
-		pr_err("quirks: CAP_PLATFORM_PROFILE requires FTBL backend\n");
+		q->profile_backend != NITRO_PROFILE_FTBL &&
+		q->profile_backend != NITRO_PROFILE_OPMS) {
+		pr_err("quirks: CAP_PLATFORM_PROFILE requires FTBL or OPMS backend\n");
 		return -EINVAL;
 	}
 	if (
 		!(q->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
 		q->profile_backend != NITRO_PROFILE_NONE) {
 		pr_err("quirks: profile_backend set but CAP_PLATFORM_PROFILE not set\n");
+		return -EINVAL;
+	}
+	if (
+		(q->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
+		q->profile_backend == NITRO_PROFILE_OPMS &&
+		!q->has_misc) {
+		pr_err("quirks: OPMS profile backend requires has_misc\n");
 		return -EINVAL;
 	}
 
@@ -398,13 +419,13 @@ struct nitro_device {
 	bool have_fan_modes;
 	u8 saved_zone[NITRO_MAX_ZONES][3];
 	u8 saved_dyn[16];
-	u8 saved_ftbl;
+	u8 saved_profile;
 	u8 saved_coolboost;
 	u8 saved_kbd_timeout;
 	u8 cur_kbd_timeout;
 	bool have_rgb;
 	bool have_dyn;
-	bool have_ftbl;
+	bool have_profile;
 	bool have_coolboost;
 	bool have_kbd_timeout;
 	bool have_saved;
@@ -604,7 +625,7 @@ static int nitro_get_misc(u8 sel, u8 *val)
 	u8 out[8] = { 0 };
 	int ret;
 
-	if (sel != 0x01 && sel != 0x0B)
+	if (sel != NITRO_MISC_TKST && sel != NITRO_MISC_OPMS)
 		return -EINVAL;
 	ret = nitro_bh_call(
 		NITRO_BH_GET_MISC,
@@ -616,6 +637,19 @@ static int nitro_get_misc(u8 sel, u8 *val)
 		return -EPROTO;
 	*val = out[1];
 	return 0;
+}
+
+static int nitro_set_misc(u8 sel, u8 val)
+{
+	u8 in[4] = { sel, val, 0, 0 };
+	u8 out[4] = { 0 };
+
+	if (sel != NITRO_MISC_TKST && sel != NITRO_MISC_OPMS)
+		return -EINVAL;
+	return nitro_bh_call(
+		NITRO_BH_SET_MISC,
+		in, sizeof(in),
+		out, sizeof(out));
 }
 
 static int nitro_get_static(u8 zone, u8 *r, u8 *g, u8 *b)
@@ -715,7 +749,11 @@ static int nitro_set_fan_behavior(u8 bitmap, u8 cpu_mode, u8 gpu_mode)
 		out, sizeof(out));
 }
 
-static int nitro_get_fan_behavior(u8 bitmap, u8 *cpu_mode, u8 *gpu_mode)
+static int nitro_get_fan_behavior(
+	struct nitro_device *nitro,
+	u8 bitmap,
+	u8 *cpu_mode,
+	u8 *gpu_mode)
 {
 	u8 in[4] = { bitmap, 0, 0, 0 };
 	u8 out[8] = { 0 };
@@ -731,15 +769,21 @@ static int nitro_get_fan_behavior(u8 bitmap, u8 *cpu_mode, u8 *gpu_mode)
 		return -EPROTO;
 	*cpu_mode = out[1] & 0x3;
 	*gpu_mode = (out[1] >> 6) & 0x3;
+	if (nitro->quirks->fan_mode_zero_auto) {
+		if (*cpu_mode == 0)
+			*cpu_mode = NITRO_FAN_MODE_AUTO;
+		if (*gpu_mode == 0)
+			*gpu_mode = NITRO_FAN_MODE_AUTO;
+	}
 	return 0;
 }
 
-static int nitro_fans_auto(void)
+static int nitro_fans_auto(struct nitro_device *nitro)
 {
 	u8 cpu, gpu;
 	int ret;
 
-	ret = nitro_get_fan_behavior(NITRO_FANBIT_BOTH, &cpu, &gpu);
+	ret = nitro_get_fan_behavior(nitro, NITRO_FANBIT_BOTH, &cpu, &gpu);
 	if (ret)
 		return ret;
 	return (cpu == NITRO_FAN_MODE_AUTO &&
@@ -1021,7 +1065,7 @@ static int nitro_fan_write(struct nitro_device *nitro, u8 which, u8 duty)
 	int ret;
 
 	mutex_lock(&nitro->lock);
-	if (!nitro_get_fan_behavior(bitmap, &prev_cpu, &prev_gpu))
+	if (!nitro_get_fan_behavior(nitro, bitmap, &prev_cpu, &prev_gpu))
 		have_prev = prev_cpu >= NITRO_FAN_MODE_AUTO &&
 			prev_cpu <= NITRO_FAN_MODE_CUSTOM && (
 				nitro->quirks->fan_count < 2 || (
@@ -1180,7 +1224,7 @@ static ssize_t fan_mode_show(
 	if (!nitro)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_fan_behavior(NITRO_FANBIT_BOTH, &cpu, &gpu);
+	ret = nitro_get_fan_behavior(nitro, NITRO_FANBIT_BOTH, &cpu, &gpu);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
@@ -1248,7 +1292,7 @@ static ssize_t fan_mode_store(
 		NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU;
 	mutex_lock(&nitro->lock);
 	if (!have_cpu || !have_gpu) {
-		ret = nitro_get_fan_behavior(bitmap, &c, &g);
+		ret = nitro_get_fan_behavior(nitro, bitmap, &c, &g);
 		if (ret)
 			goto out;
 		if (!have_cpu)
@@ -1328,11 +1372,11 @@ static ssize_t coolboost_store(
 
 	mutex_lock(&nitro->lock);
 	if (nitro->quirks->fan_count >= 2) {
-		ret = nitro_fans_auto();
+		ret = nitro_fans_auto(nitro);
 	} else {
 		u8 cpu, gpu;
 
-		ret = nitro_get_fan_behavior(NITRO_FANBIT_CPU, &cpu, &gpu);
+		ret = nitro_get_fan_behavior(nitro, NITRO_FANBIT_CPU, &cpu, &gpu);
 		if (!ret && cpu != NITRO_FAN_MODE_AUTO)
 			ret = -EPERM;
 	}
@@ -1473,7 +1517,7 @@ static ssize_t tkst_show(
 	if (!nitro)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_misc(0x01, &v);
+	ret = nitro_get_misc(NITRO_MISC_TKST, &v);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
@@ -1487,8 +1531,6 @@ static ssize_t tkst_store(
 	size_t count)
 {
 	struct nitro_device *nitro = dev_get_drvdata(dev);
-	u8 in[4] = { 0x01, 0, 0, 0 };
-	u8 out[4] = { 0 };
 	unsigned long v;
 	int ret;
 
@@ -1505,12 +1547,8 @@ static ssize_t tkst_store(
 		return ret;
 	if (v > 1)
 		return -ERANGE;
-	in[1] = (u8)v;
 	mutex_lock(&nitro->lock);
-	ret = nitro_bh_call(
-		NITRO_BH_SET_MISC,
-		in, sizeof(in),
-		out, sizeof(out));
+	ret = nitro_set_misc(NITRO_MISC_TKST, (u8)v);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
@@ -1531,7 +1569,7 @@ static ssize_t opms_show(
 	if (!nitro)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_misc(0x0B, &v);
+	ret = nitro_get_misc(NITRO_MISC_OPMS, &v);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
@@ -1889,7 +1927,7 @@ static int writeback_fan(
 	}
 
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
+	ret = nitro_get_fan_behavior(nitro, bitmap, &cpu, &gpu);
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"read fan_mode failed %d\n", ret);
@@ -1947,7 +1985,7 @@ restore:
 		"restore fan_mode cpu=%s gpu=%s ret=%d\n",
 		nitro_fan_mode_name(cpu), nitro_fan_mode_name(gpu), back);
 	if (!back) {
-		ret = nitro_get_fan_behavior(bitmap, &back_cpu, &back_gpu);
+		ret = nitro_get_fan_behavior(nitro, bitmap, &back_cpu, &back_gpu);
 		if (ret) {
 			writeback_line(buf, size, pos,
 				"verify fan_mode failed %d\n", ret);
@@ -1989,7 +2027,7 @@ static int writeback_fan_mode(
 	}
 
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_fan_behavior(bitmap, &cpu, &gpu);
+	ret = nitro_get_fan_behavior(nitro, bitmap, &cpu, &gpu);
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"read fan_mode failed %d\n", ret);
@@ -2012,7 +2050,7 @@ static int writeback_fan_mode(
 		err = ret;
 		goto out;
 	}
-	ret = nitro_get_fan_behavior(bitmap, &back_cpu, &back_gpu);
+	ret = nitro_get_fan_behavior(nitro, bitmap, &back_cpu, &back_gpu);
 	if (ret) {
 		writeback_line(buf, size, pos, "verify fan_mode failed %d\n", ret);
 		err = ret;
@@ -2059,6 +2097,118 @@ static int writeback_ftbl(
 	writeback_line(buf, size, pos, "verify ftbl=0x%02x\n", back);
 	if (back != value)
 		err = -EIO;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static int writeback_opms(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 value = 0, back = 0;
+	int ret, err = 0;
+
+	mutex_lock(&nitro->lock);
+	ret = nitro_get_misc(NITRO_MISC_OPMS, &value);
+	if (ret) {
+		writeback_line(buf, size, pos, "read opms failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "read opms=0x%02x\n", value);
+	ret = nitro_set_misc(NITRO_MISC_OPMS, value);
+	writeback_line(buf, size, pos, "set opms=0x%02x ret=%d\n", value, ret);
+	if (ret) {
+		err = ret;
+		goto out;
+	}
+	ret = nitro_get_misc(NITRO_MISC_OPMS, &back);
+	if (ret) {
+		writeback_line(buf, size, pos, "verify opms failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "verify opms=0x%02x\n", back);
+	if (back != value)
+		err = -EIO;
+out:
+	mutex_unlock(&nitro->lock);
+	return err;
+}
+
+static int writeback_kbd_static(
+	struct nitro_device *nitro,
+	char *buf,
+	size_t size,
+	size_t *pos)
+{
+	u8 orig[NITRO_MAX_ZONES][3];
+	u8 inv[NITRO_MAX_ZONES][3];
+	u8 back[NITRO_MAX_ZONES][3];
+	unsigned int i, nzones = nitro_zone_count(nitro);
+	int ret, err = 0;
+
+	if (!nitro_has_cap(nitro, NITRO_CAP_RGB) || !nzones) {
+		writeback_line(buf, size, pos,
+			"skip: this model reports no RGB\n");
+		return -ENODEV;
+	}
+
+	mutex_lock(&nitro->lock);
+	for (i = 0; i < nzones; i++) {
+		ret = nitro_get_static(
+			nitro_zone_ids[i],
+			&orig[i][0], &orig[i][1], &orig[i][2]);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"read zone%u failed %d\n", i + 1, ret);
+			err = ret;
+			goto out;
+		}
+		writeback_line(buf, size, pos, "read zone%u=%u %u %u\n",
+			i + 1, orig[i][0], orig[i][1], orig[i][2]);
+		inv[i][0] = 255 - orig[i][0];
+		inv[i][1] = 255 - orig[i][1];
+		inv[i][2] = 255 - orig[i][2];
+	}
+
+	for (i = 0; i < nzones; i++) {
+		writeback_line(buf, size, pos, "write zone%u=%u %u %u\n",
+			i + 1, inv[i][0], inv[i][1], inv[i][2]);
+	}
+	ret = nitro_apply_static(nitro, inv, 100);
+	writeback_line(buf, size, pos, "set static ret=%d\n", ret);
+	if (ret) {
+		err = ret;
+		goto restore;
+	}
+
+	for (i = 0; i < nzones; i++) {
+		ret = nitro_get_static(
+			nitro_zone_ids[i],
+			&back[i][0], &back[i][1], &back[i][2]);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"verify zone%u failed %d\n", i + 1, ret);
+			err = ret;
+			goto restore;
+		}
+		writeback_line(buf, size, pos, "verify zone%u=%u %u %u\n",
+			i + 1, back[i][0], back[i][1], back[i][2]);
+		if (back[i][0] != inv[i][0] ||
+			back[i][1] != inv[i][1] ||
+			back[i][2] != inv[i][2])
+			err = -EIO;
+	}
+
+restore:
+	ret = nitro_apply_static(nitro, orig, 100);
+	writeback_line(buf, size, pos, "restore static ret=%d\n", ret);
+	if (ret && !err)
+		err = ret;
 out:
 	mutex_unlock(&nitro->lock);
 	return err;
@@ -2121,6 +2271,7 @@ static int writeback_coolboost(
 	}
 	writeback_line(buf, size, pos, "read coolboost=%u\n", value);
 	ret = nitro_get_fan_behavior(
+		nitro,
 		nitro->quirks->fan_count >= 2 ?
 			NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU,
 		&cpu, &gpu);
@@ -2209,8 +2360,12 @@ static ssize_t writeback_store(
 		ret = writeback_fan_mode(nitro, report, sizeof(report), &pos);
 	else if (!strcmp(path, "ftbl"))
 		ret = writeback_ftbl(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "opms"))
+		ret = writeback_opms(nitro, report, sizeof(report), &pos);
 	else if (!strcmp(path, "kbd_timeout"))
 		ret = writeback_kbd_timeout(nitro, report, sizeof(report), &pos);
+	else if (!strcmp(path, "kbd_static"))
+		ret = writeback_kbd_static(nitro, report, sizeof(report), &pos);
 	else if (!strcmp(path, "coolboost"))
 		ret = writeback_coolboost(nitro, report, sizeof(report), &pos);
 	else {
@@ -2222,7 +2377,7 @@ static ssize_t writeback_store(
 done:
 	if (usage)
 		writeback_line(report, sizeof(report), &pos,
-			"paths=fan_cpu fan_gpu fan_mode ftbl kbd_timeout coolboost\n");
+			"paths=fan_cpu fan_gpu fan_mode ftbl opms kbd_timeout kbd_static coolboost\n");
 	writeback_line(report, sizeof(report), &pos, "result=%s ret=%d\n",
 		ret ? "error" : "ok", ret);
 	mutex_lock(&nitro->lock);
@@ -2531,7 +2686,7 @@ static int nitro_hwmon_read(
 		if (attr != hwmon_pwm_enable)
 			return -EOPNOTSUPP;
 		mutex_lock(&nitro->lock);
-		ret = nitro_get_fan_behavior(nitro_fan_bitmap(nitro), &cpu, &gpu);
+		ret = nitro_get_fan_behavior(nitro, nitro_fan_bitmap(nitro), &cpu, &gpu);
 		mutex_unlock(&nitro->lock);
 		if (ret)
 			return ret;
@@ -2749,18 +2904,70 @@ static int nitro_profile_to_ftbl(enum platform_profile_option profile, u8 *ftbl)
 	}
 }
 
+static int nitro_opms_to_profile(u8 opms, enum platform_profile_option *profile)
+{
+	switch (opms) {
+	case NITRO_OPMS_QUIET:
+		*profile = PLATFORM_PROFILE_QUIET;
+		return 0;
+	case NITRO_OPMS_BALANCED:
+		*profile = PLATFORM_PROFILE_BALANCED;
+		return 0;
+	case NITRO_OPMS_BALANCED_PERFORMANCE:
+		*profile = PLATFORM_PROFILE_BALANCED_PERFORMANCE;
+		return 0;
+	case NITRO_OPMS_PERFORMANCE:
+		*profile = PLATFORM_PROFILE_PERFORMANCE;
+		return 0;
+	case NITRO_OPMS_LOW_POWER:
+		*profile = PLATFORM_PROFILE_LOW_POWER;
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int nitro_profile_to_opms(enum platform_profile_option profile, u8 *opms)
+{
+	switch (profile) {
+	case PLATFORM_PROFILE_QUIET:
+		*opms = NITRO_OPMS_QUIET;
+		return 0;
+	case PLATFORM_PROFILE_BALANCED:
+		*opms = NITRO_OPMS_BALANCED;
+		return 0;
+	case PLATFORM_PROFILE_BALANCED_PERFORMANCE:
+		*opms = NITRO_OPMS_BALANCED_PERFORMANCE;
+		return 0;
+	case PLATFORM_PROFILE_PERFORMANCE:
+		*opms = NITRO_OPMS_PERFORMANCE;
+		return 0;
+	case PLATFORM_PROFILE_LOW_POWER:
+		*opms = NITRO_OPMS_LOW_POWER;
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
 static int nitro_profile_get(struct device *dev, enum platform_profile_option *profile)
 {
 	struct nitro_device *nitro = nitro_current();
-	u8 ftbl;
+	u8 value;
 	int ret;
 
 	if (!nitro)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_ftbl(&ftbl);
-	if (!ret)
-		ret = nitro_ftbl_to_profile(ftbl, profile);
+	if (nitro->quirks->profile_backend == NITRO_PROFILE_OPMS) {
+		ret = nitro_get_misc(NITRO_MISC_OPMS, &value);
+		if (!ret)
+			ret = nitro_opms_to_profile(value, profile);
+	} else {
+		ret = nitro_get_ftbl(&value);
+		if (!ret)
+			ret = nitro_ftbl_to_profile(value, profile);
+	}
 	mutex_unlock(&nitro->lock);
 	return ret;
 }
@@ -2768,19 +2975,31 @@ static int nitro_profile_get(struct device *dev, enum platform_profile_option *p
 static int nitro_profile_set(struct device *dev, enum platform_profile_option profile)
 {
 	struct nitro_device *nitro = nitro_current();
-	u8 ftbl;
+	u8 value;
 	int ret;
 
 	if (!nitro)
 		return -ENODEV;
-	ret = nitro_profile_to_ftbl(profile, &ftbl);
+	if (nitro->quirks->profile_backend == NITRO_PROFILE_OPMS) {
+		ret = nitro_profile_to_opms(profile, &value);
+		if (ret)
+			return ret;
+		mutex_lock(&nitro->lock);
+		ret = nitro_set_misc(NITRO_MISC_OPMS, value);
+		mutex_unlock(&nitro->lock);
+		if (!ret)
+			pr_info("platform profile %d -> OPMS 0x%02x\n",
+				profile, value);
+		return ret;
+	}
+	ret = nitro_profile_to_ftbl(profile, &value);
 	if (ret)
 		return ret;
 	mutex_lock(&nitro->lock);
-	ret = nitro_set_ftbl(ftbl);
+	ret = nitro_set_ftbl(value);
 	mutex_unlock(&nitro->lock);
 	if (!ret)
-		pr_info("platform profile %d -> FTBL 0x%02x\n", profile, ftbl);
+		pr_info("platform profile %d -> FTBL 0x%02x\n", profile, value);
 	return ret;
 }
 
@@ -2794,7 +3013,8 @@ static int nitro_profile_probe(void *drvdata, unsigned long *choices)
 		return -ENODEV;
 	if (
 		!nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) ||
-		nitro->quirks->profile_backend != NITRO_PROFILE_FTBL)
+		(nitro->quirks->profile_backend != NITRO_PROFILE_FTBL &&
+		nitro->quirks->profile_backend != NITRO_PROFILE_OPMS))
 		return -ENODEV;
 	set_bit(PLATFORM_PROFILE_LOW_POWER, choices);
 	set_bit(PLATFORM_PROFILE_QUIET, choices);
@@ -2831,7 +3051,9 @@ static ssize_t capabilities_show(
 	if (nitro->capabilities & NITRO_CAP_HWMON)
 		n += sysfs_emit_at(buf, n, " hwmon=1");
 	if (nitro->capabilities & NITRO_CAP_PLATFORM_PROFILE)
-		n += sysfs_emit_at(buf, n, " profile=ftbl");
+		n += sysfs_emit_at(buf, n, " profile=%s",
+			q->profile_backend == NITRO_PROFILE_OPMS ?
+			"opms" : "ftbl");
 	if (nitro->capabilities & NITRO_CAP_RGB)
 		n += sysfs_emit_at(buf, n, " rgb=%u", q->rgb_zones);
 	if (nitro->capabilities & NITRO_CAP_RGB_DYNAMIC)
@@ -2985,6 +3207,14 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 		},
 		.driver_data = (void *)&nitro_quirks_an515_45,
 	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-58"),
+			DMI_MATCH(DMI_BOARD_NAME, "Jimny_ADH"),
+		},
+		.driver_data = (void *)&nitro_quirks_an515_58,
+	},
 	{}
 };
 MODULE_DEVICE_TABLE(dmi, nitro_dmi);
@@ -2996,14 +3226,6 @@ MODULE_DEVICE_TABLE(dmi, nitro_dmi);
  * only read paths (see nitro_validate_probe_quirks()).
  */
 static const struct dmi_system_id nitro_probe_dmi[] __initconst = {
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-58"),
-			DMI_MATCH(DMI_BOARD_NAME, "Jimny_ADH"),
-		},
-		.driver_data = (void *)&nitro_quirks_an515_58_probe,
-	},
 	{}
 };
 
@@ -3027,6 +3249,7 @@ static void nitro_save_initial(struct nitro_device *nitro)
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_FAN_MODE) &&
 		!nitro_get_fan_behavior(
+		nitro,
 		nitro->quirks->fan_count >= 2 ?
 			NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU,
 		&nitro->saved_fan_cpu_mode,
@@ -3066,12 +3289,17 @@ static void nitro_save_initial(struct nitro_device *nitro)
 		else
 			memset(nitro->saved_dyn, 0, sizeof(nitro->saved_dyn));
 	}
-	if (
-		nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
-		nitro->quirks->profile_backend == NITRO_PROFILE_FTBL &&
-		!nitro_get_ftbl(&d)) {
-		nitro->saved_ftbl = d;
-		nitro->have_ftbl = true;
+	if (nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE)) {
+		if (nitro->quirks->profile_backend == NITRO_PROFILE_FTBL &&
+			!nitro_get_ftbl(&d)) {
+			nitro->saved_profile = d;
+			nitro->have_profile = true;
+		} else if (
+			nitro->quirks->profile_backend == NITRO_PROFILE_OPMS &&
+			!nitro_get_misc(NITRO_MISC_OPMS, &d)) {
+			nitro->saved_profile = d;
+			nitro->have_profile = true;
+		}
 	}
 	nitro->have_saved = true;
 }
@@ -3114,9 +3342,9 @@ static void nitro_log_state(struct nitro_device *nitro)
 			dyn[8], dyn[9], dyn[10], dyn[11], dyn[12], dyn[13], dyn[14], dyn[15]);
 	if (nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT))
 		pr_info("kbd_timeout=%u\n", nitro->cur_kbd_timeout);
-	if (nitro->quirks->has_misc && !nitro_get_misc(0x01, &tkst))
+	if (nitro->quirks->has_misc && !nitro_get_misc(NITRO_MISC_TKST, &tkst))
 		pr_info("TKST=0x%02x\n", tkst);
-	if (nitro->quirks->has_misc && !nitro_get_misc(0x0B, &opms))
+	if (nitro->quirks->has_misc && !nitro_get_misc(NITRO_MISC_OPMS, &opms))
 		pr_info("OPMS=0x%02x\n", opms);
 }
 
@@ -3259,7 +3487,8 @@ static int __init nitro_init(void)
 
 		if (
 			nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
-			nitro->quirks->profile_backend == NITRO_PROFILE_FTBL) {
+			(nitro->quirks->profile_backend == NITRO_PROFILE_FTBL ||
+			nitro->quirks->profile_backend == NITRO_PROFILE_OPMS)) {
 			pp = devm_platform_profile_register(
 				&nitro_pdev->dev,
 				"nitro", nitro,
@@ -3359,10 +3588,16 @@ static void __exit nitro_exit(void)
 			nitro_set_dynamic_raw(eff);
 		}
 		if (
-			nitro->have_ftbl &&
-			nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
-			nitro->quirks->profile_backend == NITRO_PROFILE_FTBL)
-			nitro_set_ftbl(nitro->saved_ftbl);
+			nitro->have_profile &&
+			nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE)) {
+			if (nitro->quirks->profile_backend == NITRO_PROFILE_FTBL)
+				nitro_set_ftbl(nitro->saved_profile);
+			else if (
+				nitro->quirks->profile_backend ==
+				NITRO_PROFILE_OPMS)
+				nitro_set_misc(NITRO_MISC_OPMS,
+					nitro->saved_profile);
+		}
 		if (
 			nitro->have_coolboost &&
 			nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) &&
@@ -3373,9 +3608,9 @@ static void __exit nitro_exit(void)
 			nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
 			nitro_set_kbd_timeout(!!nitro->saved_kbd_timeout))
 			pr_warn("keyboard timeout restore failed\n");
-		pr_info("restored fan %u/%u ftbl 0x%02x coolboost %u\n",
+		pr_info("restored fan %u/%u profile 0x%02x coolboost %u\n",
 			nitro->saved_fan_cpu, nitro->saved_fan_gpu,
-			nitro->saved_ftbl,
+			nitro->saved_profile,
 			nitro->have_coolboost ? nitro->saved_coolboost : 0);
 		mutex_unlock(&nitro->lock);
 	}
