@@ -1061,9 +1061,9 @@ static int nitro_apply_static(
 	u8 brightness)
 {
 	/*
-	 * led[0] = 0x08 (BIT(3), "zones on") is AN515-57-verified only. If a new
-	 * model needs a different value, add a quirks field instead of editing
-	 * this function; see docs/REVERSE.md.
+	 * led[0] = 0x08 (BIT(3), "zones on") is verified on AN515-57 and
+	 * AN515-58. If a new model needs a different value, add a quirks field
+	 * instead of editing this function; see docs/REVERSE.md.
 	 */
 	u8 led[8] = { 0x08, 0, 0, 0, 0, 0, 0, 0 };
 	u8 out[8] = { 0 };
@@ -1975,7 +1975,7 @@ static ssize_t apge_raw_store(
 }
 static DEVICE_ATTR(apge_raw, 0600, apge_raw_show, apge_raw_store);
 
-static void writeback_line(
+static void __printf(4, 5) writeback_line(
 	char *buf,
 	size_t size,
 	size_t *pos,
@@ -3293,9 +3293,9 @@ static umode_t nitro_attr_is_visible(
 	if (!strcmp(attr->name, "capabilities"))
 		return mode;
 	/*
-	 * wmi_raw and ec_raw intentionally bypass the probe-mode write mask:
-	 * wmi_raw restricts methods internally, and ec_raw store only selects
-	 * the register index for read without performing any hardware EC write.
+	 * wmi_raw, ec_raw and apge_raw intentionally bypass the probe-mode
+	 * write mask: wmi_raw restricts methods internally, ec_raw store only
+	 * selects the register index for read, and apge_raw accepts GET only.
 	 */
 	if (!strcmp(attr->name, "wmi_raw") || !strcmp(attr->name, "ec_raw") ||
 		!strcmp(attr->name, "apge_raw"))
@@ -3510,6 +3510,8 @@ static void nitro_log_state(struct nitro_device *nitro)
 	u8 dyn[16] = { 0 };
 	unsigned int nzones = nitro_zone_count(nitro);
 
+	pr_info("board %s (tested BIOS %s)\n",
+		nitro->quirks->board, nitro->quirks->tested_bios);
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_FAN) &&
 		!nitro_get_fan(NITRO_FAN_CPU, &duty))

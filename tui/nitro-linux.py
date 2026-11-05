@@ -76,7 +76,6 @@ from model import (
     CAP_RGB,
     CAP_RGB_DYNAMIC,
     CAP_COOLBOOST,
-    CAP_LED_CLASS,
     CAP_KBD_TIMEOUT,
 )
 
@@ -384,24 +383,6 @@ class UI:
     def click(self, y, x, h, w, action):
         self.clicks.append((y, x, h, w, action))
 
-    def divider(self, y, x, wbox, label, right=None):
-        iw = wbox - 4
-        if iw < len(label) + 2:
-            return
-        self.addstr(y, x + 2, "─" * iw, curses.color_pair(C.DIM))
-        lx = x + 2 + (iw - len(label)) // 2
-        self.addstr(y, lx, label, curses.color_pair(C.DIM) | curses.A_BOLD)
-        if right:
-            rx = x + 2 + iw
-            for text, action in reversed(right):
-                rx -= len(text)
-                if rx <= lx + len(label):
-                    break
-                self.addstr(y, rx - 1, " " * (len(text) + 2), curses.color_pair(C.DIM))
-                self.addstr(y, rx, text, curses.color_pair(C.ACC))
-                self.click(y, rx, 1, len(text), action)
-                rx -= 2
-
     def at_click(self, my, mx):
         for lst in (self.eclicks, self.clicks):
             for y, x, h, w, action in lst:
@@ -514,14 +495,6 @@ class UI:
             if maxw is not None and cx - x >= maxw:
                 break
         return cx
-
-    def tips(self, y, x, ylim, lines, maxw):
-        if y + len(lines) > ylim:
-            return y
-        base = curses.color_pair(C.DIM)
-        for i, ln in enumerate(lines):
-            self.rich(y + i, x, ln, base, maxw=maxw)
-        return y + len(lines)
 
     @property
     def live(self):
@@ -651,14 +624,6 @@ class UI:
             return max(0, min(100, int(self.wanted.get("brightness", 100))))
         except (TypeError, ValueError):
             return 100
-
-    def state_plan(self):
-        src = self.source
-        key = "profile_battery" if src == "battery" else "profile_ac"
-        v = self.wanted.get(key)
-        if v in [p[1] for p in PLANS]:
-            return v
-        return None
 
     def send(self, msg, note):
         try:
@@ -936,7 +901,6 @@ class UI:
             self.button(y, x, bw, f"({PLAN_KEYS[i]}) {name}", active=(cur == val),
                         action=("plan", i))
             y += pitch
-        ac, bat = self.wanted.get("profile_ac"), self.wanted.get("profile_battery")
 
     def bil_section(self,
             ytop, x1, ta, tb, x0, series, ktop, kbot,

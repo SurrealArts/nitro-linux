@@ -1,4 +1,4 @@
-# Implementation notes (AN515-57, BIOS V1.22)
+# Implementation notes (AN515-57, AN515-45, AN515-58)
 
 The EC is driven over WMI GUID `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56` (ACPI method `WMBH`, `Arg1` = sub-command, `Arg2` = input buffer).
 

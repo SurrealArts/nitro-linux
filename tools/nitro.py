@@ -35,7 +35,6 @@ from model import (
     CAP_RGB,
     CAP_RGB_DYNAMIC,
     CAP_COOLBOOST,
-    CAP_LED_CLASS,
     CAP_KBD_TIMEOUT,
 )
 
