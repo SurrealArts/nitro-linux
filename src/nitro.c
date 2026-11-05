@@ -46,6 +46,7 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_WMI_GUID				"7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56"
 #define NITRO_APGE_GUID				"61EF69EA-865C-4BC3-A502-A0DEBA0CB531"
 #define NITRO_EC_COOLBOOST			0x10
+#define NITRO_EC_KBD_TIMEOUT			0x06
 #define NITRO_MISC_TKST				0x01
 #define NITRO_MISC_OPMS				0x0B
 
@@ -136,12 +137,20 @@ enum nitro_coolboost_backend {
 	NITRO_COOLBOOST_EC10			= 1,
 };
 
+enum nitro_kbd_timeout_backend {
+	NITRO_KBD_TIMEOUT_APGE			= 0,
+	NITRO_KBD_TIMEOUT_EC06			= 1,
+};
+
 struct nitro_quirks {
 	unsigned long capabilities;
 	u8 rgb_zones;
 	u8 dynamic_effects;
 	u8 profile_backend;
 	u8 coolboost_backend;
+	u8 kbd_timeout_backend;
+	u8 kbd_timeout_on;
+	u8 kbd_timeout_off;
 	u8 fan_count;
 	bool has_misc;
 	bool fan_mode_zero_auto;
@@ -159,6 +168,7 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_FTBL,
 	.coolboost_backend = NITRO_COOLBOOST_EC10,
+	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = true,
 	.board = "Scala_TLS",
@@ -173,6 +183,7 @@ static const struct nitro_quirks nitro_quirks_an515_58 = {
 	.dynamic_effects = 0,
 	.profile_backend = NITRO_PROFILE_OPMS,
 	.coolboost_backend = NITRO_COOLBOOST_NONE,
+	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = true,
 	.fan_mode_zero_auto = true,
@@ -184,11 +195,14 @@ static const struct nitro_quirks nitro_quirks_an515_45 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON |
 			NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB |
 			NITRO_CAP_RGB_DYNAMIC | NITRO_CAP_COOLBOOST |
-			NITRO_CAP_LED_CLASS | NITRO_CAP_KBD_TIMEOUT,
+			NITRO_CAP_LED_CLASS,
 	.rgb_zones = 4,
 	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_FTBL,
 	.coolboost_backend = NITRO_COOLBOOST_EC10,
+	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_EC06,
+	.kbd_timeout_on = 0x00,
+	.kbd_timeout_off = 0x1e,
 	.fan_count = 2,
 	.has_misc = false,
 	.board = "Scala_CAS",
@@ -335,6 +349,20 @@ static int nitro_validate_quirks(const struct nitro_quirks *q)
 		!(q->capabilities & NITRO_CAP_COOLBOOST) &&
 		q->coolboost_backend != NITRO_COOLBOOST_NONE) {
 		pr_err("quirks: coolboost_backend set but CAP_COOLBOOST not set\n");
+		return -EINVAL;
+	}
+
+	if (
+		q->kbd_timeout_backend != NITRO_KBD_TIMEOUT_APGE &&
+		q->kbd_timeout_backend != NITRO_KBD_TIMEOUT_EC06) {
+		pr_err("quirks: unknown keyboard timeout backend %u\n",
+			q->kbd_timeout_backend);
+		return -EINVAL;
+	}
+	if (
+		q->kbd_timeout_backend == NITRO_KBD_TIMEOUT_EC06 &&
+		q->kbd_timeout_on == q->kbd_timeout_off) {
+		pr_err("quirks: EC keyboard timeout on/off values are equal\n");
 		return -EINVAL;
 	}
 
@@ -885,13 +913,32 @@ static int nitro_apge_call(u32 method, u64 in, struct nitro_apge_result *res)
 	return 0;
 }
 
-static int nitro_get_kbd_timeout(u8 *enabled)
+static int nitro_get_kbd_timeout(struct nitro_device *nitro, u8 *enabled)
 {
 	struct nitro_apge_result res;
 	u64 value;
-	int ret = nitro_apge_call(
-		NITRO_APGE_GET, NITRO_APGE_KBD_TIMEOUT_QUERY, &res);
+	u8 ec;
+	int ret;
 
+	if (nitro->quirks->kbd_timeout_backend == NITRO_KBD_TIMEOUT_EC06) {
+		ret = nitro_ec_read(NITRO_EC_KBD_TIMEOUT, &ec);
+		if (ret)
+			return ret;
+		if (ec == nitro->quirks->kbd_timeout_on) {
+			*enabled = 1;
+			return 0;
+		}
+		if (ec == nitro->quirks->kbd_timeout_off) {
+			*enabled = 0;
+			return 0;
+		}
+		pr_info("EC keyboard timeout value 0x%02x is neither on nor off\n",
+			ec);
+		return -EPROTO;
+	}
+
+	ret = nitro_apge_call(
+		NITRO_APGE_GET, NITRO_APGE_KBD_TIMEOUT_QUERY, &res);
 	if (ret) {
 		pr_info("keyboard timeout query failed %d\n", ret);
 		return ret;
@@ -919,18 +966,34 @@ static int nitro_get_kbd_timeout(u8 *enabled)
 	return -EPROTO;
 }
 
-static int nitro_set_kbd_timeout(bool on)
+static int nitro_set_kbd_timeout(struct nitro_device *nitro, bool on)
 {
 	struct nitro_apge_result res;
 	u8 check;
-	int ret = nitro_apge_call(
+	int ret;
+
+	if (nitro->quirks->kbd_timeout_backend == NITRO_KBD_TIMEOUT_EC06) {
+		ret = nitro_ec_write(NITRO_EC_KBD_TIMEOUT,
+			on ?
+				nitro->quirks->kbd_timeout_on :
+				nitro->quirks->kbd_timeout_off);
+		if (ret)
+			return ret;
+		ret = nitro_get_kbd_timeout(nitro, &check);
+		if (ret)
+			return ret;
+		if (check != on)
+			return -EIO;
+		return 0;
+	}
+
+	ret = nitro_apge_call(
 		NITRO_APGE_SET,
 		on ? NITRO_APGE_KBD_TIMEOUT_ON : NITRO_APGE_KBD_TIMEOUT_OFF,
 		&res);
-
 	if (ret)
 		return ret;
-	ret = nitro_get_kbd_timeout(&check);
+	ret = nitro_get_kbd_timeout(nitro, &check);
 	if (ret)
 		return ret;
 	if (check != on)
@@ -1443,7 +1506,7 @@ static ssize_t kbd_timeout_store(
 		on = v;
 	}
 	mutex_lock(&nitro->lock);
-	ret = nitro_set_kbd_timeout(on);
+	ret = nitro_set_kbd_timeout(nitro, on);
 	if (!ret)
 		nitro->cur_kbd_timeout = on;
 	mutex_unlock(&nitro->lock);
@@ -2309,7 +2372,39 @@ static int writeback_kbd_timeout(
 	int ret, err = 0;
 
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_kbd_timeout(&value);
+	if (nitro->quirks->kbd_timeout_backend == NITRO_KBD_TIMEOUT_EC06) {
+		u8 ec = 0, ec_back = 0;
+
+		ret = nitro_ec_read(NITRO_EC_KBD_TIMEOUT, &ec);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"read ec 0x06 failed %d\n", ret);
+			err = ret;
+			goto out;
+		}
+		writeback_line(buf, size, pos, "read ec 0x06=0x%02x\n", ec);
+		ret = nitro_ec_write(NITRO_EC_KBD_TIMEOUT, ec);
+		writeback_line(buf, size, pos,
+			"set ec 0x06=0x%02x ret=%d\n", ec, ret);
+		if (ret) {
+			err = ret;
+			goto out;
+		}
+		ret = nitro_ec_read(NITRO_EC_KBD_TIMEOUT, &ec_back);
+		if (ret) {
+			writeback_line(buf, size, pos,
+				"verify ec 0x06 failed %d\n", ret);
+			err = ret;
+			goto out;
+		}
+		writeback_line(buf, size, pos,
+			"verify ec 0x06=0x%02x\n", ec_back);
+		if (ec_back != ec)
+			err = -EIO;
+		goto out;
+	}
+
+	ret = nitro_get_kbd_timeout(nitro, &value);
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"read kbd_timeout failed %d\n", ret);
@@ -2317,13 +2412,13 @@ static int writeback_kbd_timeout(
 		goto out;
 	}
 	writeback_line(buf, size, pos, "read kbd_timeout=%u\n", value);
-	ret = nitro_set_kbd_timeout(value);
+	ret = nitro_set_kbd_timeout(nitro, value);
 	writeback_line(buf, size, pos, "set kbd_timeout=%u ret=%d\n", value, ret);
 	if (ret) {
 		err = ret;
 		goto out;
 	}
-	ret = nitro_get_kbd_timeout(&back);
+	ret = nitro_get_kbd_timeout(nitro, &back);
 	if (ret) {
 		writeback_line(buf, size, pos,
 			"verify kbd_timeout failed %d\n", ret);
@@ -3348,7 +3443,7 @@ static void nitro_save_initial(struct nitro_device *nitro)
 	}
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
-		!nitro_get_kbd_timeout(&nitro->saved_kbd_timeout)) {
+		!nitro_get_kbd_timeout(nitro, &nitro->saved_kbd_timeout)) {
 		nitro->cur_kbd_timeout = nitro->saved_kbd_timeout;
 		nitro->have_kbd_timeout = true;
 	}
@@ -3539,7 +3634,7 @@ static int __init nitro_init(void)
 	} else if (nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT)) {
 		u8 timeout_on;
 
-		if (!nitro_get_kbd_timeout(&timeout_on))
+		if (!nitro_get_kbd_timeout(nitro, &timeout_on))
 			nitro->cur_kbd_timeout = timeout_on;
 		else
 			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
@@ -3691,7 +3786,7 @@ static void __exit nitro_exit(void)
 		if (
 			nitro->have_kbd_timeout &&
 			nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
-			nitro_set_kbd_timeout(!!nitro->saved_kbd_timeout))
+			nitro_set_kbd_timeout(nitro, !!nitro->saved_kbd_timeout))
 			pr_warn("keyboard timeout restore failed\n");
 		pr_info("restored fan %u/%u profile 0x%02x coolboost %u\n",
 			nitro->saved_fan_cpu, nitro->saved_fan_gpu,
