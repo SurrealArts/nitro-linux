@@ -153,9 +153,10 @@ cannot distinguish a working path from firmware that ignores writes.
 is no same value to write, so it first enables the static path (`0x02` zones-on,
 the current zone colours and brightness), then writes a known effect (mode 1,
 red), reads `0x15` back, and restores the static colours. The report prints the
-raw reply even when the `0x15` status byte is non-zero. It is a visual test, not
-a promotion by itself; the reporter has to confirm the keyboard changed. A
-report from an AN515-57:
+reply even when a status-prefixed board returns a non-zero status; 0-based
+boards are shifted into the same layout first. It is a visual test, not a
+promotion by itself; the reporter has to confirm the keyboard changed. A report
+from an AN515-57:
 
 ```text
 path=fan_cpu

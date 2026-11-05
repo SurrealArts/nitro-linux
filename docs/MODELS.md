@@ -6,7 +6,7 @@
 | -------- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
 | AN515-57 | Scala_TLS | V1.22 | **Verified** | All features: fan, profile, 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10), 30-sec keyboard timeout (WMI APGE) |
 | AN515-45 | Scala_CAS | V1.14 | **Verified** | fan, fan mode, profile (FTBL), 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10). The 30-sec timeout is backed by EC 0x06 on this board: the APGE GET fails although `WMAA` matches the AN515-57. `kbd_timeout` stays off until the EC 0x06 write-back and the ON/OFF behaviour are confirmed. has_misc=false |
-| AN515-58 | Jimny_ADH | V2.21 | **Verified** | fan, fan mode (0=auto), profile (OPMS), 4-zone static RGB, 30-sec keyboard timeout (WMI APGE), hwmon. Dynamic effects and CoolBoost off: `0x15` returns all zeros and EC `0x10` never moved. has_misc=true |
+| AN515-58 | Jimny_ADH | V2.21 | **Verified** | fan, fan mode (0=auto), profile (OPMS), 4-zone RGB, 5 dynamic effects, 30-sec keyboard timeout (WMI APGE), hwmon. `0x15` replies 0-based (mode first); the driver normalizes it. CoolBoost off: EC `0x10` never moved. has_misc=true |
 
 ---
 
@@ -20,7 +20,7 @@ No probe candidates at present.
 
 ### Model notes
 
-- **AN515-58** uses OPMS (`GET/SET_MISC` selector `0x0B`) for the platform profile; FTBL reads on that board but does not track the active profile (it read 0 after `acer-wmi` set `performance`). The board reports fan mode 0 at boot while the fans are auto, so its quirk sets `fan_mode_zero_auto`. Static RGB is four zones; dynamic effects stay off because `0x15` returns all zeros, and CoolBoost stays off because EC `0x10` never moved.
+- **AN515-58** uses OPMS (`GET/SET_MISC` selector `0x0B`) for the platform profile; FTBL reads on that board but does not track the active profile (it read 0 after `acer-wmi` set `performance`). The board reports fan mode 0 at boot while the fans are auto, so its quirk sets `fan_mode_zero_auto`. Static RGB is four zones and dynamic effects work: the `0x15` reply is 0-based (mode first, no status byte), unlike the AN515-57/45 `BHLK` layout, so the driver shifts it into the status-prefixed layout. CoolBoost stays off because EC `0x10` never moved.
 
 Escalating a probe entry (for example enabling `dyn`) requires the previous probe output and a passing `writeback` for each write path being enabled: `ftbl` or `opms` for the platform profile, `kbd_timeout` for the APGE path or the EC 0x06 path (plus the visible 30-second timeout in both states for EC 0x06), `kbd_static` for static RGB, `kbd_dynamic` plus a confirmed visible effect for dynamic RGB, and direct EC evidence for CoolBoost.
 

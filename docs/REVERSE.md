@@ -19,7 +19,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 | 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                               |
 | 0x13 | GET | fan-table byte                                                                                                                            |
 | 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
-| 0x15 | GET | 16B effect state: `[status, mode, speed, brightness, x, dir, R, G, B, ...]` (`BHLK[0]` is the ACPI status; the Acer WMI class strips it from `gmOutput`) |
+| 0x15 | GET | 16B effect state. AN515-57/45: `[status, mode, speed, brightness, 0xFF, dir, R, G, B, ...]` (`BHLK[0]` is the ACPI status; the Acer WMI class strips it from `gmOutput`). AN515-58: `[mode, speed, brightness, x, dir, R, G, B, ...]`, no status byte; the driver shifts it into the status-prefixed layout |
 | 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies; used only by the OPMS profile backend and the write-back probe) |
 | 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
 
@@ -134,13 +134,13 @@ Notable findings:
   5 performance, 6 low-power. `acer-wmi` uses the same selector and value space
   for its V4 thermal profile.
 - Effect modes 1-5 (breath, neon, wave, shifting, zoom) light the keyboard.
-- AN515-58 (`Jimny_ADH`) returns an all-zero `0x15` payload at boot, so there is
-  no same value to write back. A `0x14` mode-1 write was accepted, but the next
-  `0x15` GET failed the status check and the keyboard did not visibly change.
-  The write-back now prints the raw reply even on that failure, and enables the
-  static path (the `0x02` zones-on command) first, because the effect can be
-  stored while the LED controller is still off. Dynamic effects stay disabled
-  until the raw reply and a visible effect confirm the path.
+- AN515-58 (`Jimny_ADH`) returns the `0x15` state 0-based, starting with the
+  effect mode and carrying no status byte, unlike the AN515-57/45 `BHLK` layout.
+  A `0x14` mode-1 write after the `0x02` zones-on command made the keyboard
+  breathe red for 1.5 s; the reply was `01 04 64 00 01 ff 00 00 ...` (mode 1,
+  speed 4, brightness 100, dir 1, red). The driver shifts that reply into the
+  status-prefixed layout and enables `dynamic_effects=5` for this board. An
+  all-zero reply means no state is stored and is ignored by the static path.
 - Static zones (mode `0 = KBLE`):
     - a bare `0x14` with mode 0 blanks the backlight.
     - Mode 0 only displays after the enable sequence:

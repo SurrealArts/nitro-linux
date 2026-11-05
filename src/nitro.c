@@ -154,6 +154,7 @@ struct nitro_quirks {
 	u8 fan_count;
 	bool has_misc;
 	bool fan_mode_zero_auto;
+	bool dyn_reply_0based;
 	const char *board;
 	const char *tested_bios;
 };
@@ -178,15 +179,17 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 static const struct nitro_quirks nitro_quirks_an515_58 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
 			NITRO_CAP_HWMON | NITRO_CAP_PLATFORM_PROFILE |
-			NITRO_CAP_RGB | NITRO_CAP_KBD_TIMEOUT,
+			NITRO_CAP_RGB | NITRO_CAP_RGB_DYNAMIC |
+			NITRO_CAP_KBD_TIMEOUT,
 	.rgb_zones = 4,
-	.dynamic_effects = 0,
+	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_OPMS,
 	.coolboost_backend = NITRO_COOLBOOST_NONE,
 	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = true,
 	.fan_mode_zero_auto = true,
+	.dyn_reply_0based = true,
 	.board = "Jimny_ADH",
 	.tested_bios = "V2.21",
 };
@@ -1026,7 +1029,7 @@ static int nitro_set_dynamic_raw(const u8 *data16)
 		out, sizeof(out));
 }
 
-static int nitro_get_dynamic_raw(u8 *data16)
+static int nitro_get_dynamic_raw(struct nitro_device *nitro, u8 *data16)
 {
 	u8 in[4] = { 0, 0, 0, 0 };
 	u8 out[16] = { 0 };
@@ -1034,10 +1037,22 @@ static int nitro_get_dynamic_raw(u8 *data16)
 
 	if (ret)
 		return ret;
+	if (nitro->quirks->dyn_reply_0based) {
+		memset(data16, 0, 16);
+		memcpy(data16 + 1, out, sizeof(out) - 1);
+		return 0;
+	}
 	memcpy(data16, out, sizeof(out));
 	if (out[0] != 0)
 		return -EPROTO;
 	return 0;
+}
+
+static bool nitro_dyn_state_valid(const u8 *data16)
+{
+	static const u8 zero[16] = { 0 };
+
+	return memcmp(data16, zero, sizeof(zero)) != 0;
 }
 
 static int nitro_apply_static(
@@ -1727,7 +1742,8 @@ static ssize_t kbd_static_store(
 	mutex_lock(&nitro->lock);
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC) &&
-		!nitro_get_dynamic_raw(dyn) &&
+		!nitro_get_dynamic_raw(nitro, dyn) &&
+		nitro_dyn_state_valid(dyn) &&
 		dyn[3] <= 100)
 		brightness = dyn[3];
 	nitro->cur_zone[idx][0] = (u8)r;
@@ -2332,7 +2348,7 @@ static int writeback_kbd_dynamic(
 		goto restore;
 	}
 
-	ret = nitro_get_dynamic_raw(back);
+	ret = nitro_get_dynamic_raw(nitro, back);
 	writeback_line(buf, size, pos,
 		"verify dyn=%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
 		back[0], back[1], back[2], back[3],
@@ -2582,7 +2598,7 @@ static ssize_t kbd_dynamic_show(
 	if (!nitro)
 		return -ENODEV;
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_dynamic_raw(d);
+	ret = nitro_get_dynamic_raw(nitro, d);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
@@ -2658,10 +2674,12 @@ static ssize_t kbd_bright_show(
 	if (!nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC))
 		return sysfs_emit(buf, "100\n");
 	mutex_lock(&nitro->lock);
-	ret = nitro_get_dynamic_raw(d);
+	ret = nitro_get_dynamic_raw(nitro, d);
 	mutex_unlock(&nitro->lock);
 	if (ret)
 		return ret;
+	if (!nitro_dyn_state_valid(d))
+		return sysfs_emit(buf, "100\n");
 	return sysfs_emit(buf, "%u\n", d[3] <= 100 ? d[3] : 100);
 }
 
@@ -2692,7 +2710,7 @@ static ssize_t kbd_bright_store(
 		return -ERANGE;
 	mutex_lock(&nitro->lock);
 	if (nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC)) {
-		ret = nitro_get_dynamic_raw(d);
+		ret = nitro_get_dynamic_raw(nitro, d);
 		if (ret) {
 			mutex_unlock(&nitro->lock);
 			return ret;
@@ -2974,7 +2992,8 @@ static int nitro_led_set(struct led_classdev *cdev, enum led_brightness brightne
 	mutex_lock(&nitro->lock);
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC) &&
-		!nitro_get_dynamic_raw(dyn) && dyn[3] <= 100)
+		!nitro_get_dynamic_raw(nitro, dyn) &&
+		nitro_dyn_state_valid(dyn) && dyn[3] <= 100)
 		bri = dyn[3];
 	idx = nitro_zone_index(nitro, nl->zone);
 	if (idx >= 0) {
@@ -3464,7 +3483,8 @@ static void nitro_save_initial(struct nitro_device *nitro)
 	}
 	memcpy(nitro->cur_zone, nitro->saved_zone, sizeof(nitro->cur_zone));
 	if (nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC)) {
-		if (!nitro_get_dynamic_raw(nitro->saved_dyn))
+		if (!nitro_get_dynamic_raw(nitro, nitro->saved_dyn) &&
+			nitro_dyn_state_valid(nitro->saved_dyn))
 			nitro->have_dyn = true;
 		else
 			memset(nitro->saved_dyn, 0, sizeof(nitro->saved_dyn));
@@ -3516,7 +3536,7 @@ static void nitro_log_state(struct nitro_device *nitro)
 		pr_info("CTML raw=0x%02x%02x\n", v1, v0);
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC) &&
-		!nitro_get_dynamic_raw(dyn))
+		!nitro_get_dynamic_raw(nitro, dyn))
 		pr_info("dyn raw %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
 			dyn[0], dyn[1], dyn[2], dyn[3], dyn[4], dyn[5], dyn[6], dyn[7],
 			dyn[8], dyn[9], dyn[10], dyn[11], dyn[12], dyn[13], dyn[14], dyn[15]);
