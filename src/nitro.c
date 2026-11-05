@@ -59,6 +59,7 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_APGE_KBD_TIMEOUT_OFF_REPLY	0x0000000000080000ULL
 #define NITRO_APGE_KBD_TIMEOUT_ON_UNSET		0x001E0000000000ULL
 #define NITRO_APGE_KBD_TIMEOUT_DURATION_MASK	0x00FF0000000000ULL
+#define NITRO_APGE_KBD_TIMEOUT_BRIGHT_MASK	0x000000FF00000000ULL
 #define NITRO_APGE_KBD_TIMEOUT_VALID		0x0000000000080000ULL
 
 #define NITRO_BH_SET_LED			0x02
@@ -203,9 +204,7 @@ static const struct nitro_quirks nitro_quirks_an515_45 = {
 	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_FTBL,
 	.coolboost_backend = NITRO_COOLBOOST_EC10,
-	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_EC06,
-	.kbd_timeout_on = 0x00,
-	.kbd_timeout_off = 0x1e,
+	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = false,
 	.board = "Scala_CAS",
@@ -946,7 +945,7 @@ static int nitro_get_kbd_timeout(struct nitro_device *nitro, u8 *enabled)
 		pr_info("keyboard timeout query failed %d\n", ret);
 		return ret;
 	}
-	value = res.value;
+	value = res.value & ~NITRO_APGE_KBD_TIMEOUT_BRIGHT_MASK;
 	if (
 		value == NITRO_APGE_KBD_TIMEOUT_ON_REPLY ||
 		value == NITRO_APGE_KBD_TIMEOUT_ON_UNSET) {

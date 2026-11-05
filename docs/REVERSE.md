@@ -87,15 +87,16 @@ The boot-time value is read as **on**, since the 30-sec duration is what the fir
 
 EC cross-check (AN515-57, `ec_read()`): the setting is backed by EC `0x06`, which reads `0x1E` while the timeout is on and `0x00` while it is off.
 
-EC 0x06 backend (AN515-45): the APGE GUID is present and `WMAA` is byte-for-byte
-the AN515-57 method, but the GET fails on that board.
-The setting is still visible in EC `0x06`; the reporter read `0x00` with the
-timeout on and `0x1E` with it off, the inverse of the AN515-57. The quirk selects
-`NITRO_KBD_TIMEOUT_EC06` with `kbd_timeout_on`/`kbd_timeout_off` carrying that
-mapping, but `NITRO_CAP_KBD_TIMEOUT` stays clear until a same-value EC `0x06`
-write-back passes and the 30-second timeout is seen in both states. The EC path
-writes the raw byte directly and verifies it with a re-read; it does not use the
-WMI SET.
+APGE on AN515-45: the GET works and returns `0x0000006400080000`. Byte 4
+(bits 32-39) is the keyboard brightness (`0x64` = 100 in that report); bits 40-47
+are the timeout (`0x00` = off), and bit 19 is the valid flag. The old parser
+compared the whole 64-bit value against the AN515-57 replies and rejected the
+brightness byte, which looked like a failed GET at load. The driver masks the
+brightness byte before decoding, and the quirk uses the APGE backend.
+`NITRO_CAP_KBD_TIMEOUT` stays clear until the APGE SET and the visible ON/OFF
+behaviour are confirmed. The EC `0x06` backend remains available for boards
+where the APGE GET really does fail; it writes the raw byte directly and
+verifies it with a re-read.
 
 - Driver: `kbd_timeout` RW sysfs, accepts `0`/`1`/`on`/`off`; SET is verified by a follow-up GET.
 - Gated by `NITRO_CAP_KBD_TIMEOUT`. If the APGE GUID is missing the capability is dropped at load and the module still probes.

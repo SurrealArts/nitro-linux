@@ -22,7 +22,7 @@ Minimum terminal size: **120x45**
 | AN515-45 | Scala_CAS | V1.14 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
 | AN515-58 | Jimny_ADH | V2.21 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
 
-[^1]: Has the EC 0x06 keyboard-timeout path, but it stays disabled until the write-back and ON/OFF behaviour are confirmed.
+[^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but the control stays disabled until the APGE SET and the visible ON/OFF behaviour are confirmed.
 
 [^2]: Model hardware does not support toggle-able CoolBoost.
 
