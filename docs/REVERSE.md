@@ -6,22 +6,22 @@ Instance 0.
 
 Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 
-| Arg1 | Dir | Effect                                                                                                                                    |
-| ---- | --- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 0x02 | SET | LED/zones-on bitmap (`BIT(3)` zones-on + zone mask from quirk; AN515-57 uses `0xF<<40`)                                                   |
-| 0x05 | GET | sysinfo via EC GGSI (also sets `PSEE=1` as a side effect). Selectors: 1 temp, 2 cpu fan RPM, 6 gpu fan RPM                                |
-| 0x06 | SET | static zone RGB: `[zone 1/2/4/8, R, G, B]`                                                                                                |
-| 0x07 | GET | static zone RGB                                                                                                                           |
-| 0x0E | SET | fan behavior (`bitmap, 0, cpu \| gpu<<6`)                                                                                                 |
-| 0x0F | GET | fan behavior (status, modes)                                                                                                              |
-| 0x10 | SET | fan duty 0-100 (`[1=cpu/4=gpu, duty]`; firmware range-checks)                                                                             |
-| 0x11 | GET | fan duty                                                                                                                                  |
-| 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                               |
-| 0x13 | GET | fan-table byte                                                                                                                            |
-| 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                     |
+| Arg1 | Dir | Effect                                                                                                                                                                                                                                                                                                      |
+| ---- | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0x02 | SET | LED/zones-on bitmap (`BIT(3)` zones-on + zone mask from quirk; AN515-57 uses `0xF<<40`)                                                                                                                                                                                                                     |
+| 0x05 | GET | sysinfo via EC GGSI (also sets `PSEE=1` as a side effect). Selectors: 1 temp, 2 cpu fan RPM, 6 gpu fan RPM                                                                                                                                                                                                  |
+| 0x06 | SET | static zone RGB: `[zone 1/2/4/8, R, G, B]`                                                                                                                                                                                                                                                                  |
+| 0x07 | GET | static zone RGB                                                                                                                                                                                                                                                                                             |
+| 0x0E | SET | fan behavior (`bitmap, 0, cpu \| gpu<<6`)                                                                                                                                                                                                                                                                   |
+| 0x0F | GET | fan behavior (status, modes)                                                                                                                                                                                                                                                                                |
+| 0x10 | SET | fan duty 0-100 (`[1=cpu/4=gpu, duty]`; firmware range-checks)                                                                                                                                                                                                                                               |
+| 0x11 | GET | fan duty                                                                                                                                                                                                                                                                                                    |
+| 0x12 | SET | fan-table/thermal policy byte (no firmware range check — driver clamps 0-4)                                                                                                                                                                                                                                 |
+| 0x13 | GET | fan-table byte                                                                                                                                                                                                                                                                                              |
+| 0x14 | SET | 16B effect payload: `[mode, speed, brightness, x, dir, R, G, B, ...]`                                                                                                                                                                                                                                       |
 | 0x15 | GET | 16B effect state. AN515-57/45: `[status, mode, speed, brightness, 0xFF, dir, R, G, B, ...]` (`BHLK[0]` is the ACPI status; the Acer WMI class strips it from `gmOutput`). AN515-58: `[mode, speed, brightness, x, dir, R, G, B, ...]`, no status byte; the driver shifts it into the status-prefixed layout |
-| 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies; used only by the OPMS profile backend and the write-back probe) |
-| 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them |
+| 0x16 | SET | misc, selector in `[0]`: 1 = TKST byte, 0x0B = OPMS (touches overdrive + notifies; used only by the OPMS profile backend and the write-back probe)                                                                                                                                                          |
+| 0x17 | GET | misc: only selectors 1 (TKST) and 0x0B (OPMS) return clean status+value; others return stale bytes or call into SMI — driver refuses them                                                                                                                                                                   |
 
 ### Sensors (sysinfo 0x05)
 
@@ -30,11 +30,11 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 carries the status in bits 7-0, the reading in bits 23-8 and the
 supported-sensor bitmap in bits 39-24.
 
-| Command | Selector | Reply                          |
-| ------- | -------- | ------------------------------ |
-| `0x00`  | none     | supported-sensor bitmap        |
-| `0x01`  | sensor   | reading (degrees C or RPM)     |
-| `0x02`  | none     | battery status                 |
+| Command | Selector | Reply                      |
+| ------- | -------- | -------------------------- |
+| `0x00`  | none     | supported-sensor bitmap    |
+| `0x01`  | sensor   | reading (degrees C or RPM) |
+| `0x02`  | none     | battery status             |
 
 Bitmap bit `n` means sensor `n + 1` is supported. AN515-57 returns `0x0227`:
 CPU temperature (1), CPU fan (2), external temperature 2 (3), GPU fan (6) and
@@ -49,12 +49,12 @@ firmware does not report. If the bitmap read still fails, all three temperature
 channels stay visible: `temp2` is the only GPU temperature source when the
 NVIDIA driver is not loaded, and a missing sensor simply returns a read error.
 
-| hwmon attribute                            | Channel               | Source         |
-| ------------------------------------------ | --------------------- | -------------- |
-| `temp1_input` `temp2_input` `temp3_input`  | CPU / GPU / external 2 | sensors 1, `0x0A`, 3 |
-| `fan1_input` `fan2_input`                  | CPU / GPU             | sensors 2, 6   |
-| `pwm1` `pwm2`                              | CPU / GPU duty 0-255  | `0x10` / `0x11` |
-| `pwm1_enable` `pwm2_enable`                | 0 max, 1 custom, 2 auto | `0x0E` / `0x0F` |
+| hwmon attribute                           | Channel                 | Source               |
+| ----------------------------------------- | ----------------------- | -------------------- |
+| `temp1_input` `temp2_input` `temp3_input` | CPU / GPU / external 2  | sensors 1, `0x0A`, 3 |
+| `fan1_input` `fan2_input`                 | CPU / GPU               | sensors 2, 6         |
+| `pwm1` `pwm2`                             | CPU / GPU duty 0-255    | `0x10` / `0x11`      |
+| `pwm1_enable` `pwm2_enable`               | 0 max, 1 custom, 2 auto | `0x0E` / `0x0F`      |
 
 `pwmN` reads `round(duty * 255 / 100)`; a write converts back to a percentage
 and switches that fan to custom, the same path `fan_cpu` and `fan_gpu` use.

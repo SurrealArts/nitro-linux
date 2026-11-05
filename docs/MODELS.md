@@ -2,11 +2,15 @@
 
 **As of v2.3.5, verified configurations:**
 
-| Model    | Board     | BIOS  | Status       | Notes                                                                                                              |
-| -------- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| AN515-57 | Scala_TLS | V1.22 | **Verified** | All features: fan, profile, 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10), 30-sec keyboard timeout (WMI APGE) |
-| AN515-45 | Scala_CAS | V1.14 | **Verified** | fan, fan mode, profile (FTBL), 4-zone RGB, 5 dynamic effects, CoolBoost (EC 0x10). The 30-sec timeout is backed by EC 0x06 on this board: the APGE GET fails although `WMAA` matches the AN515-57. `kbd_timeout` stays off until the EC 0x06 write-back and the ON/OFF behaviour are confirmed. has_misc=false |
-| AN515-58 | Jimny_ADH | V2.21 | **Verified** | Fully supported: fan, fan mode (0=auto), profile (OPMS), 4-zone RGB, 5 dynamic effects, 30-sec keyboard timeout (WMI APGE), hwmon. `0x15` replies 0-based (mode first); the driver normalizes it. has_misc=true |
+| Model    | Board     | BIOS  | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
+| -------- | --------- | ----- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
+| AN515-57 | Scala_TLS | V1.22 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
+| AN515-45 | Scala_CAS | V1.14 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
+| AN515-58 | Jimny_ADH | V2.21 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
+
+[^1]: Has the EC 0x06 keyboard-timeout path, but it stays disabled until the write-back and ON/OFF behaviour are confirmed.
+
+[^2]: Model hardware does not support toggle-able CoolBoost.
 
 ---
 

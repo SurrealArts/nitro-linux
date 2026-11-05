@@ -12,6 +12,22 @@ Minimum terminal size: **120x45**
 - [Contributing a model report](docs/CONTRIBUTING.md)
 - [Reverse-engineering notes](docs/REVERSE.md)
 
+## Supported models
+
+**As of v2.3.5, verified configurations:**
+
+| Model    | Board     | BIOS  | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
+| -------- | --------- | ----- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
+| AN515-57 | Scala_TLS | V1.22 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
+| AN515-45 | Scala_CAS | V1.14 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
+| AN515-58 | Jimny_ADH | V2.21 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
+
+[^1]: Has the EC 0x06 keyboard-timeout path, but it stays disabled until the write-back and ON/OFF behaviour are confirmed.
+
+[^2]: Model hardware does not support toggle-able CoolBoost.
+
+See [docs/MODELS.md](docs/MODELS.md) for the full details.
+
 ## Secure Boot (Pre-install)
 
 > Scroll down further for the actual installation guide.

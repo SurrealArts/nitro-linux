@@ -24,8 +24,26 @@ def products(name):
 verified_kernel = products("nitro_dmi")
 probe_kernel = products("nitro_probe_dmi")
 
-doc_verified = re.findall(
-    r"^\|\s*([^|]+?)\s*\|.*\|\s*\*\*Verified\*\*\s*\|", docs, re.M)
+
+def verified_models(text):
+    section = text.split("# Supported models", 1)[1]
+    rows = []
+    in_table = False
+    for line in section.splitlines():
+        line = line.strip()
+        if line.startswith("|"):
+            if not in_table:
+                in_table = True
+                continue
+            if re.match(r"^\|[\s:|-]+\|$", line):
+                continue
+            rows.append(line)
+        elif in_table:
+            break
+    return [row.split("|")[1].strip() for row in rows]
+
+
+doc_verified = verified_models(docs)
 doc_candidates = re.findall(
     r"^\|\s*([^|]+?)\s*\|.*\|\s*probe shipped", docs, re.M | re.I)
 
