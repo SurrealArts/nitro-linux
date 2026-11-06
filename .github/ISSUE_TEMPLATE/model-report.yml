@@ -1,6 +1,6 @@
 name: "Model Support Report"
 description: "Request support for a new Acer Nitro/Predator model"
-title: "[Model] <product_name> / <board_name>"
+title: "[Model] <product_name>"
 labels: ["model-support"]
 body:
   - type: markdown
@@ -27,24 +27,6 @@ body:
       label: "Product Name"
       description: "From /sys/class/dmi/id/product_name"
       placeholder: "e.g., Nitro AN515-58"
-    validations:
-      required: true
-
-  - type: input
-    id: board-name
-    attributes:
-      label: "Board Name"
-      description: "From /sys/class/dmi/id/board_name"
-      placeholder: "e.g., Scala_TLS"
-    validations:
-      required: true
-
-  - type: input
-    id: bios-version
-    attributes:
-      label: "BIOS Version"
-      description: "From /sys/class/dmi/id/bios_version"
-      placeholder: "e.g., V1.22"
     validations:
       required: true
 
@@ -124,4 +106,4 @@ body:
       value: |
         ## Next Steps
 
-        Once your report is triaged, a candidate probe entry may be added in a future release. Maintainers will guide you through running `probe=1` to safely collect evidence, and — if a capability is backed by an ACPI method that answers wrongly on your board — through dumping the ACPI table that method lives in.
+        Once your report is triaged, a candidate probe entry may be added in a future release. Maintainers will guide you through running `probe=1` to safely collect evidence, and — if a capability is backed by an ACPI method that answers wrongly on your machine — through dumping the ACPI table that method lives in.

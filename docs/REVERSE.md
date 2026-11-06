@@ -25,10 +25,7 @@ Buffers: `BHSK` 4B in, `BHGK` 8B / `BHLK` 16B out.
 
 ### Sensors (sysinfo 0x05)
 
-`WMBH` `Arg1` = `0x05` takes the same 64-bit command word the in-tree
-`acer-wmi` uses: bits 7-0 select the command, bits 15-8 the sensor. The reply
-carries the status in bits 7-0, the reading in bits 23-8 and the
-supported-sensor bitmap in bits 39-24.
+`WMBH` `Arg1` = `0x05` takes the same 64-bit command word the in-tree `acer-wmi` uses: bits 7-0 select the command, bits 15-8 the sensor. The reply carries the status in bits 7-0, the reading in bits 23-8 and the supported-sensor bitmap in bits 39-24.
 
 | Command | Selector | Reply                      |
 | ------- | -------- | -------------------------- |
@@ -36,18 +33,9 @@ supported-sensor bitmap in bits 39-24.
 | `0x01`  | sensor   | reading (degrees C or RPM) |
 | `0x02`  | none     | battery status             |
 
-Bitmap bit `n` means sensor `n + 1` is supported. AN515-57 returns `0x0227`:
-CPU temperature (1), CPU fan (2), external temperature 2 (3), GPU fan (6) and
-GPU temperature (`0x0A`). At idle `0x01` read 83 °C, `0x03` 74 °C and `0x0A`
-53 °C, matching the `acer-wmi` `predator_v4` sensor list. The driver polls
-this command as step 1 of the static-lighting enable sequence, so the bitmap
-costs no extra call at probe.
+Bitmap bit `n` means sensor `n + 1` is supported. AN515-57 returns `0x0227`: CPU temperature (1), CPU fan (2), external temperature 2 (3), GPU fan (6) and GPU temperature (`0x0A`). At idle `0x01` read 83 °C, `0x03` 74 °C and `0x0A` 53 °C, matching the `acer-wmi` `predator_v4` sensor list. The driver polls this command as step 1 of the static-lighting enable sequence, so the bitmap costs no extra call at probe.
 
-The bitmap is read at load, with a short retry because a cold boot can reach the
-module before the EC answers the first WMI call. It hides the hwmon channels the
-firmware does not report. If the bitmap read still fails, all three temperature
-channels stay visible: `temp2` is the only GPU temperature source when the
-NVIDIA driver is not loaded, and a missing sensor simply returns a read error.
+The bitmap is read at load, with a short retry because a cold boot can reach the module before the EC answers the first WMI call. It hides the hwmon channels the firmware does not report. If the bitmap read still fails, all three temperature channels stay visible: `temp2` is the only GPU temperature source when the NVIDIA driver is not loaded, and a missing sensor simply returns a read error.
 
 | hwmon attribute                           | Channel                 | Source               |
 | ----------------------------------------- | ----------------------- | -------------------- |
@@ -56,10 +44,7 @@ NVIDIA driver is not loaded, and a missing sensor simply returns a read error.
 | `pwm1` `pwm2`                             | CPU / GPU duty 0-255    | `0x10` / `0x11`      |
 | `pwm1_enable` `pwm2_enable`               | 0 max, 1 custom, 2 auto | `0x0E` / `0x0F`      |
 
-`pwmN` reads `round(duty * 255 / 100)`; a write converts back to a percentage
-and switches that fan to custom, the same path `fan_cpu` and `fan_gpu` use.
-`pwmN_enable` writes only that fan's mode and leaves the other fan alone. The
-PWM channels are not created in probe mode.
+`pwmN` reads `round(duty * 255 / 100)`; a write converts back to a percentage and switches that fan to custom, the same path `fan_cpu` and `fan_gpu` use. `pwmN_enable` writes only that fan's mode and leaves the other fan alone. The PWM channels are not created in probe mode.
 
 ### Keyboard backlight timeout (WMI APGE)
 
@@ -87,38 +72,22 @@ The boot-time value is read as **on**, since the 30-sec duration is what the fir
 
 EC cross-check (AN515-57, `ec_read()`): the setting is backed by EC `0x06`, which reads `0x1E` while the timeout is on and `0x00` while it is off.
 
-APGE on AN515-45: the GET works and returns `0x0000006400080000`. Byte 4
-(bits 32-39) is the keyboard brightness (`0x64` = 100 in that report); bits 40-47
-are the timeout (`0x00` = off), and bit 19 is the valid flag. The old parser
-compared the whole 64-bit value against the AN515-57 replies and rejected the
-brightness byte, which looked like a failed GET at load. The driver masks the
-brightness byte before decoding, and the quirk uses the APGE backend.
-`NITRO_CAP_KBD_TIMEOUT` stays clear until the APGE SET and the visible ON/OFF
-behaviour are confirmed. The EC `0x06` backend remains available for boards
-where the APGE GET really does fail; it writes the raw byte directly and
-verifies it with a re-read.
+APGE on AN515-45: the GET works and returns `0x0000006400080000`. Byte 4 (bits 32-39) is the keyboard brightness (`0x64` = 100 in that report); bits 40-47 are the timeout (`0x00` = off), and bit 19 is the valid flag. The old parser compared the whole 64-bit value against the AN515-57 replies and rejected the brightness byte, which looked like a failed GET at load. The driver masks the brightness byte before decoding, and the quirk uses the APGE backend. `NITRO_CAP_KBD_TIMEOUT` stays clear until the APGE SET and the visible ON/OFF behaviour are confirmed. The EC `0x06` backend remains available for machines where the APGE GET really does fail; it writes the raw byte directly and verifies it with a re-read.
 
 - Driver: `kbd_timeout` RW sysfs, accepts `0`/`1`/`on`/`off`; SET is verified by a follow-up GET.
 - Gated by `NITRO_CAP_KBD_TIMEOUT`. If the APGE GUID is missing the capability is dropped at load and the module still probes.
 - The value read at module load is saved and restored on module unload; probe mode reads it without saving.
-- `apge_raw` is the root-only (`0600`) diagnostic for a board whose reply does not parse: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then read it back for `status`, the reply type and length, and the 64-bit value. Only method `2` (GET) is accepted, so the node cannot change firmware state. ACPI integers and buffers of 1-8 bytes are accepted and zero-extended; anything else fails with `-EPROTO`.
+- `apge_raw` is the root-only (`0600`) diagnostic for a machine whose reply does not parse: `echo "2 0x88401" > /sys/devices/platform/nitro/apge_raw`, then read it back for `status`, the reply type and length, and the 64-bit value. Only method `2` (GET) is accepted, so the node cannot change firmware state. ACPI integers and buffers of 1-8 bytes are accepted and zero-extended; anything else fails with `-EPROTO`.
 - A GET that returns an unparsable value, or a call that the ACPI method rejects, is logged at `pr_info` (`APGE keyboard timeout reply 0x...`, `keyboard timeout query failed <errno>`) before the capability is dropped, so a model report can carry the raw reply without dynamic debug.
 
 ### CoolBoost (direct EC)
 
-CoolBoost is not a WMI command on this machine. It is direct EC register
-`0x10`: **0x00 = off, 0x01 = on**. Windows NitroSense sets it directly; a
-`GetGamingMiscSetting` scan found no selector that tracks it.
+CoolBoost is not a WMI command on this machine. It is direct EC register `0x10`: **0x00 = off, 0x01 = on**. Windows NitroSense sets it directly; a `GetGamingMiscSetting` scan found no selector that tracks it.
 
 - Driver: `coolboost` RW sysfs, accepts `0`/`1`/`on`/`off`.
-- Reads always work. Writes are allowed only while both fans report `auto`;
-  in `max`/`custom` the driver returns `-EPERM` and leaves the EC value
-  retained. This matches NitroSense, where the toggle is greyed outside Auto.
+- Reads always work. Writes are allowed only while both fans report `auto`; in `max`/`custom` the driver returns `-EPERM` and leaves the EC value retained. This matches NitroSense, where the toggle is greyed outside Auto.
 - The value read at module load is saved and restored on module unload. Probe entries never expose CoolBoost.
-- Evidence: captured Windows EC traces (not stored in this repository). Auto
-  idle effect at matched temperatures: +418 CPU RPM / +451 GPU RPM on Windows at 92 °C.
-  Linux spot check at 62 °C CPU / 53 °C GPU: about 2040/2307 RPM off and
-  2255/2521 RPM on, i.e. roughly +215/+215; the direction matches.
+- Evidence: captured Windows EC traces (not stored in this repository). Auto idle effect at matched temperatures: +418 CPU RPM / +451 GPU RPM on Windows at 92 °C. Linux spot check at 62 °C CPU / 53 °C GPU: about 2040/2307 RPM off and 2255/2521 RPM on, i.e. roughly +215/+215; the direction matches.
 
 Notable findings:
 
@@ -128,20 +97,9 @@ Notable findings:
     - 2 balanced-performance
     - 3 performance
     - 4 eco
-- AN515-58 (`Jimny_ADH`) does not use FTBL for the platform profile. FTBL read
-  0 after a profile change through `acer-wmi` and 1 after NitroSense had run, so
-  it does not track the active profile. That board uses OPMS (`GET/SET_MISC`
-  selector `0x0B`) instead: 0 quiet, 1 balanced, 4 balanced-performance,
-  5 performance, 6 low-power. `acer-wmi` uses the same selector and value space
-  for its V4 thermal profile.
+- AN515-58 does not use FTBL for the platform profile. FTBL read 0 after a profile change through `acer-wmi` and 1 after NitroSense had run, so it does not track the active profile. That model uses OPMS (`GET/SET_MISC` selector `0x0B`) instead: 0 quiet, 1 balanced, 4 balanced-performance, 5 performance, 6 low-power. `acer-wmi` uses the same selector and value space for its V4 thermal profile.
 - Effect modes 1-5 (breath, neon, wave, shifting, zoom) light the keyboard.
-- AN515-58 (`Jimny_ADH`) returns the `0x15` state 0-based, starting with the
-  effect mode and carrying no status byte, unlike the AN515-57/45 `BHLK` layout.
-  A `0x14` mode-1 write after the `0x02` zones-on command made the keyboard
-  breathe red for 1.5 s; the reply was `01 04 64 00 01 ff 00 00 ...` (mode 1,
-  speed 4, brightness 100, dir 1, red). The driver shifts that reply into the
-  status-prefixed layout and enables `dynamic_effects=5` for this board. An
-  all-zero reply means no state is stored and is ignored by the static path.
+- AN515-58 returns the `0x15` state 0-based, starting with the effect mode and carrying no status byte, unlike the AN515-57/45 `BHLK` layout. A `0x14` mode-1 write after the `0x02` zones-on command made the keyboard breathe red for 1.5 s; the reply was `01 04 64 00 01 ff 00 00 ...` (mode 1, speed 4, brightness 100, dir 1, red). The driver shifts that reply into the status-prefixed layout and enables `dynamic_effects=5` for this model. An all-zero reply means no state is stored and is ignored by the static path.
 - Static zones (mode `0 = KBLE`):
     - a bare `0x14` with mode 0 blanks the backlight.
     - Mode 0 only displays after the enable sequence:
@@ -149,5 +107,5 @@ Notable findings:
         2. `0x02` `BIT(3)|0xF<<40` (zones on)
         3. per-zone `0x06` colours
         4. `0x14` `[2]=brightness, [9]=1`
-- `writeback` is the opt-in same-value write-back probe for unverified boards (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `opms` (`0x17` selector `0x0B`, written through `0x16`), `kbd_timeout` (APGE SET then GET, or a raw EC `0x06` same-value write on the EC06 backend) and `coolboost` (EC `0x10`) work the same way. `kbd_static` is the first exception: it reads the four zone colours, writes their bitwise inverse through the static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then restores the originals, because a same-value colour write cannot distinguish a working path from firmware that ignores writes. `kbd_dynamic` is the second: when `0x15` reports no effect state there is no same value to write, so it first enables the static path (`0x02` zones-on, the current zone colours and brightness), then writes a known effect (mode 1, red), reads `0x15` back and restores the static colours; it is a visual test, not a promotion. The node takes a path name, not a value, so every byte it writes was read from that board first — except the known effect used by `kbd_dynamic` — and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
+- `writeback` is the opt-in same-value write-back probe for unverified machines (`probe_writes=1`, root-only, hidden otherwise). `echo fan_cpu > writeback` reads the current mode and duty, writes that duty back through `0x0E`/`0x10`, verifies it through `0x11`, then restores the previous `0x0E` modes; `fan_mode`, `ftbl` (`0x13`), `opms` (`0x17` selector `0x0B`, written through `0x16`), `kbd_timeout` (APGE SET then GET, or a raw EC `0x06` same-value write on the EC06 backend) and `coolboost` (EC `0x10`) work the same way. `kbd_static` is the first exception: it reads the four zone colours, writes their bitwise inverse through the static path (`0x02` zones-on, per-zone `0x06`, `0x14` brightness), verifies the read-back, then restores the originals, because a same-value colour write cannot distinguish a working path from firmware that ignores writes. `kbd_dynamic` is the second: when `0x15` reports no effect state there is no same value to write, so it first enables the static path (`0x02` zones-on, the current zone colours and brightness), then writes a known effect (mode 1, red), reads `0x15` back and restores the static colours; it is a visual test, not a promotion. The node takes a path name, not a value, so every byte it writes was read from that machine first — except the known effect used by `kbd_dynamic` — and a path that cannot read does not write. The fan and mode guards live in `src/writeback.h`, shared with `tools/test_writeback_guards.c` so `make test` covers them without hardware.
 - `wmi_raw` sysfs node sends raw method calls for probing, accepting space-separated method and argument bytes in base 0 (decimal, `0x` hex, or leading-`0` octal, e.g. `17`, `0x11`, `021`). It is root-only (`0600`) and rejects values above `0xFF` and more than 17 tokens. In probe mode, write methods are rejected, but the selector bytes are not validated: `0x05` and `0x17` can have firmware side effects and some `0x17` selectors are refused by the typed attributes. Treat `wmi_raw` as a root-only engineering escape hatch, not a guaranteed read-only path.

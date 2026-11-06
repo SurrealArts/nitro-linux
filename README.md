@@ -14,13 +14,13 @@ Minimum terminal size: **120x45**
 
 ## Supported models
 
-**As of v2.3.5, verified configurations:**
+**As of v2.3.5, verified models:**
 
-| Model    | Board     | BIOS  | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
-| -------- | --------- | ----- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
-| AN515-57 | Scala_TLS | V1.22 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
-| AN515-45 | Scala_CAS | V1.14 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
-| AN515-58 | Jimny_ADH | V2.21 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
+| Model    | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
+| -------- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
+| AN515-57 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
+| AN515-45 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
+| AN515-58 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
 
 [^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but the control stays disabled until the APGE SET and the visible ON/OFF behaviour are confirmed.
 
@@ -130,6 +130,7 @@ If you build and sign the kernel module yourself, deploy only the userspace tool
 | Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                                  |
 | Keyboard  | `l` `L`             | Brightness -/+                                                             |
 | Keyboard  | `k`                 | 30-second keyboard backlight timeout on/off                                |
+| Session   | `g`                 | Open the degraded-capabilities overlay                                     |
 | Session   | `R`                 | Reapply saved state                                                        |
 | Session   | `-` `+`             | Refresh interval; `-` faster, `+` slower                                   |
 | Session   | `q` `Q`             | Quit UI (daemon continues running; stop with `sudo systemctl stop nitrod`) |
@@ -215,6 +216,7 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `/sys/class/hwmon/hwmonX/`: `nitro-isa-0000` sensors (`fan1`, `fan2`, `temp1`-`temp3`) and `coretemp` package temperature when present. `pwm1`/`pwm2` with `pwm1_enable`/`pwm2_enable` provide standard fan control for `sensors` and `fancontrol`; only the sensors the firmware reports are created.
 - `apge_raw`: root-only read of the keyboard-backlight APGE interface, `echo "2 0x88401" > apge_raw` then read it back; writes are refused.
 - `writeback`: only present with `probe_writes=1`; `echo <path> > writeback` runs a write-back test for `fan_cpu`, `fan_gpu`, `fan_mode`, `ftbl`, `opms`, `kbd_timeout`, `kbd_static`, `kbd_dynamic` or `coolboost`, and reading the node returns the report. `kbd_dynamic` is a visual effect test, not a same-value write-back. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+- `pruned`: `name=reason` lines for capabilities dropped at load because a baseline read or subsystem registration failed, or `none` when the declared set is intact. `nitro status`, `nitrod`'s status response, and the TUI use it to show `unavailable (<reason>)` instead of silently omitting a control, and the TUI top bar shows `DEGRADED` whenever that map is non-empty; click the badge or press `g` to see each dropped control and its reason.
 - `/sys/class/platform-profile/platform-profile-0/profile`: platform profile; choices are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`.
 - `/sys/class/power_supply/*/online`: AC/battery state that selects `profile_ac` or `profile_battery`.
 - `/dev/input/by-path/platform-i8042-serio-0-event-kbd`: keyboard event device used by `nitro key`.

@@ -4,9 +4,9 @@
  *
  * Targets: Acer Nitro family;
  *   verified models:
- *     - AN515-57 (Scala_TLS)
- *     - AN515-45 (Scala_CAS)
- *     - AN515-58 (Jimny_ADH)
+ *     - AN515-57
+ *     - AN515-45
+ *     - AN515-58
  *
  * Uses WMI GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56 (object BH -> WMBH).
  * Restores initial fan/RGB/FTBL/CoolBoost on unload. See docs/REVERSE.md.
@@ -110,6 +110,9 @@ MODULE_SOFTDEP("pre: led-class-multicolor");
 #define NITRO_WMI_MAX_PAYLOAD			64
 #define NITRO_INPUT_MAX				128
 #define NITRO_WRITEBACK_REPORT_MAX		1024
+#define NITRO_PRUNE_REPORT_MAX			512
+#define NITRO_BASELINE_TRIES			3
+#define NITRO_BASELINE_RETRY_MS			100
 
 enum nitro_ftbl {
 	NITRO_FTBL_BALANCED			= 0x00,
@@ -156,11 +159,9 @@ struct nitro_quirks {
 	bool has_misc;
 	bool fan_mode_zero_auto;
 	bool dyn_reply_0based;
-	const char *board;
-	const char *tested_bios;
 };
 
-// Quirks list (Model + Board + BIOS)
+// Quirks list (one entry per model)
 static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON |
 			NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB |
@@ -173,8 +174,6 @@ static const struct nitro_quirks nitro_quirks_an515_57 = {
 	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = true,
-	.board = "Scala_TLS",
-	.tested_bios = "V1.22",
 };
 
 static const struct nitro_quirks nitro_quirks_an515_58 = {
@@ -191,8 +190,6 @@ static const struct nitro_quirks nitro_quirks_an515_58 = {
 	.has_misc = true,
 	.fan_mode_zero_auto = true,
 	.dyn_reply_0based = true,
-	.board = "Jimny_ADH",
-	.tested_bios = "V2.21",
 };
 
 static const struct nitro_quirks nitro_quirks_an515_45 = {
@@ -207,8 +204,6 @@ static const struct nitro_quirks nitro_quirks_an515_45 = {
 	.kbd_timeout_backend = NITRO_KBD_TIMEOUT_APGE,
 	.fan_count = 2,
 	.has_misc = false,
-	.board = "Scala_CAS",
-	.tested_bios = "V1.14",
 };
 
 static int nitro_validate_quirks(const struct nitro_quirks *q)
@@ -423,6 +418,22 @@ static bool probe_writes;
 module_param(probe_writes, bool, 0444);
 MODULE_PARM_DESC(probe_writes, "Enable the same-value write-back probe node");
 
+#define NITRO_FAIL_FAN_CPU		BIT(0)
+#define NITRO_FAIL_FAN_GPU		BIT(1)
+#define NITRO_FAIL_FAN_MODE		BIT(2)
+#define NITRO_FAIL_COOLBOOST		BIT(3)
+#define NITRO_FAIL_KBD_TIMEOUT		BIT(4)
+#define NITRO_FAIL_RGB			BIT(5)
+#define NITRO_FAIL_RGB_DYNAMIC		BIT(6)
+#define NITRO_FAIL_PROFILE		BIT(7)
+
+static unsigned int inject_read_failures;
+module_param(inject_read_failures, uint, 0444);
+MODULE_PARM_DESC(inject_read_failures,
+	"Bitmask of baseline reads to fail for testing: "
+	"1=fan_cpu, 2=fan_gpu, 4=fan_mode, 8=coolboost, "
+	"16=kbd_timeout, 32=rgb, 64=dynamic_rgb, 128=profile");
+
 struct nitro_device;
 
 struct nitro_led {
@@ -455,7 +466,9 @@ struct nitro_device {
 	u8 saved_kbd_timeout;
 	u8 cur_kbd_timeout;
 	bool have_rgb;
+	bool have_zone[NITRO_MAX_ZONES];
 	bool have_dyn;
+	bool have_dyn_read;
 	bool have_profile;
 	bool have_coolboost;
 	bool have_kbd_timeout;
@@ -472,6 +485,7 @@ struct nitro_device {
 	u8 apge_raw_type;
 	u32 apge_raw_len;
 	char writeback_report[NITRO_WRITEBACK_REPORT_MAX];
+	char prune_report[NITRO_PRUNE_REPORT_MAX];
 };
 
 static const u8 nitro_zone_ids[NITRO_MAX_ZONES] = { 0x01, 0x02, 0x04, 0x08 };
@@ -2093,9 +2107,7 @@ restore:
 out:
 	mutex_unlock(&nitro->lock);
 	return err ? err : back;
-}
-
-static int writeback_fan_mode(
+}static int writeback_fan_mode(
 	struct nitro_device *nitro,
 	char *buf,
 	size_t size,
@@ -2107,9 +2119,17 @@ static int writeback_fan_mode(
 	int ret, err = 0;
 
 	if (!nitro->quirks->fan_count) {
-		writeback_line(buf, size, pos, "skip: this model reports no fan\n");
+		writeback_line(buf, size, pos,
+			"skip: this model reports no fan\n");
 		return -ENODEV;
 	}
+	if ((nitro->capabilities & (NITRO_CAP_FAN | NITRO_CAP_FAN_MODE)) !=
+		(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE)) {
+		writeback_line(buf, size, pos,
+			"skip: this model has no fan mode\n");
+		return -ENODEV;
+	}
+
 
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_fan_behavior(nitro, bitmap, &cpu, &gpu);
@@ -2454,8 +2474,16 @@ static int writeback_coolboost(
 	size_t size,
 	size_t *pos)
 {
-	u8 value = 0, cpu = 0, gpu = 0;
+	u8 value = 0, back = 0, cpu = 0, gpu = 0;
 	int ret, err = 0;
+
+	if (!nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) ||
+		!nitro_has_cap(nitro, NITRO_CAP_FAN_MODE) ||
+		nitro->quirks->coolboost_backend != NITRO_COOLBOOST_EC10) {
+		writeback_line(buf, size, pos,
+			"skip: this model has no CoolBoost backend\n");
+		return -ENODEV;
+	}
 
 	mutex_lock(&nitro->lock);
 	ret = nitro_get_coolboost(&value);
@@ -2480,8 +2508,20 @@ static int writeback_coolboost(
 	}
 	ret = nitro_set_coolboost(value);
 	writeback_line(buf, size, pos, "set coolboost=%u ret=%d\n", value, ret);
-	if (ret)
+	if (ret) {
 		err = ret;
+		goto out;
+	}
+	ret = nitro_get_coolboost(&back);
+	if (ret) {
+		writeback_line(buf, size, pos,
+			"verify coolboost failed %d\n", ret);
+		err = ret;
+		goto out;
+	}
+	writeback_line(buf, size, pos, "verify coolboost=%u\n", back);
+	if (back != value)
+		err = -EIO;
 out:
 	mutex_unlock(&nitro->lock);
 	return err;
@@ -2803,6 +2843,8 @@ static umode_t nitro_hwmon_is_visible(
 		if (channel > 1)
 			break;
 		if (channel == 1 && nitro->quirks->fan_count < 2)
+			break;
+		if (channel == 1 && !nitro->have_fan_gpu)
 			break;
 		if (!nitro_sensor_present(nitro, nitro_fan_sensor[channel]))
 			break;
@@ -3269,11 +3311,25 @@ static ssize_t capabilities_show(
 }
 static DEVICE_ATTR_RO(capabilities);
 
+static ssize_t pruned_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct nitro_device *nitro = dev_get_drvdata(dev);
+
+	if (!nitro)
+		return -ENODEV;
+	return sysfs_emit(buf, "%s", nitro->prune_report[0] ?
+		nitro->prune_report : "none\n");
+}
+static DEVICE_ATTR_RO(pruned);
+
 /*
  * Every attribute in nitro_attrs must be handled here. There is no default
  * allow path: a newly added attribute that is not listed below stays hidden
  * even when its capability is present, so update this function together with
- * nitro_attrs and the capabilities file.
+ * nitro_attrs and the capabilities and pruned files.
  */
 static umode_t nitro_attr_is_visible(
 	struct kobject *kobj,
@@ -3289,7 +3345,8 @@ static umode_t nitro_attr_is_visible(
 		return 0;
 	q = nitro->quirks;
 
-	if (!strcmp(attr->name, "capabilities"))
+	if (!strcmp(attr->name, "capabilities") ||
+		!strcmp(attr->name, "pruned"))
 		return mode;
 	/*
 	 * wmi_raw, ec_raw and apge_raw intentionally bypass the probe-mode
@@ -3307,6 +3364,8 @@ static umode_t nitro_attr_is_visible(
 			return 0;
 	} else if (!strcmp(attr->name, "fan_gpu")) {
 		if (!(nitro->capabilities & NITRO_CAP_FAN) || q->fan_count < 2)
+			return 0;
+		if (!nitro->probe_mode && !nitro->have_fan_gpu)
 			return 0;
 	} else if (!strcmp(attr->name, "fan_mode")) {
 		if (
@@ -3357,6 +3416,7 @@ static umode_t nitro_attr_is_visible(
 
 static struct attribute *nitro_attrs[] = {
 	&dev_attr_capabilities.attr,
+	&dev_attr_pruned.attr,
 	&dev_attr_fan_cpu.attr,
 	&dev_attr_fan_gpu.attr,
 	&dev_attr_fan_mode.attr,
@@ -3387,13 +3447,12 @@ static const struct attribute_group *nitro_groups[] = {
 	NULL,
 };
 
-// Verified List (Model + Board)
+// Verified list (system vendor + product name)
 static const struct dmi_system_id nitro_dmi[] __initconst = {
 	{
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-57"),
-			DMI_MATCH(DMI_BOARD_NAME, "Scala_TLS"),
 		},
 		.driver_data = (void *)&nitro_quirks_an515_57,
 	},
@@ -3401,7 +3460,6 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-45"),
-			DMI_MATCH(DMI_BOARD_NAME, "Scala_CAS"),
 		},
 		.driver_data = (void *)&nitro_quirks_an515_45,
 	},
@@ -3409,7 +3467,6 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Nitro AN515-58"),
-			DMI_MATCH(DMI_BOARD_NAME, "Jimny_ADH"),
 		},
 		.driver_data = (void *)&nitro_quirks_an515_58,
 	},
@@ -3417,7 +3474,7 @@ static const struct dmi_system_id nitro_dmi[] __initconst = {
 };
 MODULE_DEVICE_TABLE(dmi, nitro_dmi);
 
-// Probe List (Model + Board)
+// Probe list (system vendor + product name)
 /*
  * Probe-only DMI entries. Each entry is added by a maintainer after a Model
  * Support Report is triaged, and points at a quirks struct that advertises
@@ -3427,90 +3484,282 @@ static const struct dmi_system_id nitro_probe_dmi[] __initconst = {
 	{}
 };
 
-static void nitro_save_initial(struct nitro_device *nitro)
+static bool nitro_save_initial(struct nitro_device *nitro)
 {
 	unsigned int i, nzones = nitro_zone_count(nitro);
+	bool ok = true;
 	u8 d;
 
 	if (nitro_has_cap(nitro, NITRO_CAP_FAN)) {
-		if (!nitro_get_fan(NITRO_FAN_CPU, &d)) {
-			nitro->saved_fan_cpu = d;
-			nitro->have_fan_cpu = true;
+		if (!nitro->have_fan_cpu) {
+			if (!(inject_read_failures & NITRO_FAIL_FAN_CPU) &&
+				!nitro_get_fan(NITRO_FAN_CPU, &d)) {
+				nitro->saved_fan_cpu = d;
+				nitro->have_fan_cpu = true;
+			} else {
+				ok = false;
+			}
 		}
-		if (
-			nitro->quirks->fan_count >= 2 &&
-			!nitro_get_fan(NITRO_FAN_GPU, &d)) {
-			nitro->saved_fan_gpu = d;
-			nitro->have_fan_gpu = true;
+		if (nitro->quirks->fan_count >= 2 && !nitro->have_fan_gpu) {
+			if (!(inject_read_failures & NITRO_FAIL_FAN_GPU) &&
+				!nitro_get_fan(NITRO_FAN_GPU, &d)) {
+				nitro->saved_fan_gpu = d;
+				nitro->have_fan_gpu = true;
+			} else {
+				ok = false;
+			}
 		}
 	}
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_FAN_MODE) &&
-		!nitro_get_fan_behavior(
-		nitro,
-		nitro->quirks->fan_count >= 2 ?
-			NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU,
-		&nitro->saved_fan_cpu_mode,
-		&nitro->saved_fan_gpu_mode))
-		nitro->have_fan_modes = true;
+		!nitro->have_fan_modes) {
+		if (
+			!(inject_read_failures & NITRO_FAIL_FAN_MODE) &&
+			!nitro_get_fan_behavior(
+				nitro,
+				nitro->quirks->fan_count >= 2 ?
+					NITRO_FANBIT_BOTH : NITRO_FANBIT_CPU,
+				&nitro->saved_fan_cpu_mode,
+				&nitro->saved_fan_gpu_mode))
+			nitro->have_fan_modes = true;
+		else
+			ok = false;
+	}
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_COOLBOOST) &&
-		!nitro_get_coolboost(&d)) {
-		nitro->saved_coolboost = d;
-		nitro->have_coolboost = true;
+		!nitro->have_coolboost) {
+		if (!(inject_read_failures & NITRO_FAIL_COOLBOOST) &&
+			!nitro_get_coolboost(&d)) {
+			nitro->saved_coolboost = d;
+			nitro->have_coolboost = true;
+		} else {
+			ok = false;
+		}
 	}
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT) &&
-		!nitro_get_kbd_timeout(nitro, &nitro->saved_kbd_timeout)) {
-		nitro->cur_kbd_timeout = nitro->saved_kbd_timeout;
-		nitro->have_kbd_timeout = true;
+		!nitro->have_kbd_timeout) {
+		if (
+			!(inject_read_failures & NITRO_FAIL_KBD_TIMEOUT) &&
+			!nitro_get_kbd_timeout(nitro,
+				&nitro->saved_kbd_timeout)) {
+			nitro->cur_kbd_timeout = nitro->saved_kbd_timeout;
+			nitro->have_kbd_timeout = true;
+		} else {
+			ok = false;
+		}
 	}
-	if (nitro_has_cap(nitro, NITRO_CAP_RGB)) {
-		nitro->have_rgb = true;
+	if (nitro_has_cap(nitro, NITRO_CAP_RGB) && !nitro->have_rgb) {
+		bool rgb_ok = true;
+
 		for (i = 0; i < nzones; i++) {
-			if (nitro_get_static(
-				nitro_zone_ids[i],
-				&nitro->saved_zone[i][0],
-				&nitro->saved_zone[i][1],
-				&nitro->saved_zone[i][2])) {
+			if (nitro->have_zone[i])
+				continue;
+			if ((inject_read_failures & NITRO_FAIL_RGB) ||
+				nitro_get_static(
+					nitro_zone_ids[i],
+					&nitro->saved_zone[i][0],
+					&nitro->saved_zone[i][1],
+					&nitro->saved_zone[i][2])) {
 				nitro->saved_zone[i][0] =
 				nitro->saved_zone[i][1] =
 				nitro->saved_zone[i][2] = 0;
-				nitro->have_rgb = false;
+				rgb_ok = false;
+			} else {
+				nitro->have_zone[i] = true;
+			}
+		}
+		for (i = 0; i < nzones; i++) {
+			if (!nitro->have_zone[i])
+				rgb_ok = false;
+		}
+		nitro->have_rgb = rgb_ok;
+		if (!rgb_ok)
+			ok = false;
+	}
+	memcpy(nitro->cur_zone, nitro->saved_zone, sizeof(nitro->cur_zone));
+	if (
+		nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC) &&
+		!nitro->have_dyn_read) {
+		if (!(inject_read_failures & NITRO_FAIL_RGB_DYNAMIC) &&
+			!nitro_get_dynamic_raw(nitro, nitro->saved_dyn)) {
+			nitro->have_dyn_read = true;
+			if (nitro_dyn_state_valid(nitro->saved_dyn))
+				nitro->have_dyn = true;
+			else
+				memset(nitro->saved_dyn, 0,
+					sizeof(nitro->saved_dyn));
+		} else {
+			memset(nitro->saved_dyn, 0, sizeof(nitro->saved_dyn));
+			ok = false;
+		}
+	}
+	if (
+		nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE) &&
+		!nitro->have_profile) {
+		if (nitro->quirks->profile_backend == NITRO_PROFILE_FTBL) {
+			if (!(inject_read_failures & NITRO_FAIL_PROFILE) &&
+				!nitro_get_ftbl(&d)) {
+				nitro->saved_profile = d;
+				nitro->have_profile = true;
+			} else {
+				ok = false;
+			}
+		} else if (
+			nitro->quirks->profile_backend == NITRO_PROFILE_OPMS) {
+			if (!(inject_read_failures & NITRO_FAIL_PROFILE) &&
+				!nitro_get_misc(NITRO_MISC_OPMS, &d)) {
+				nitro->saved_profile = d;
+				nitro->have_profile = true;
+			} else {
+				ok = false;
 			}
 		}
 	}
-	memcpy(nitro->cur_zone, nitro->saved_zone, sizeof(nitro->cur_zone));
-	if (nitro_has_cap(nitro, NITRO_CAP_RGB_DYNAMIC)) {
-		if (!nitro_get_dynamic_raw(nitro, nitro->saved_dyn) &&
-			nitro_dyn_state_valid(nitro->saved_dyn))
-			nitro->have_dyn = true;
-		else
-			memset(nitro->saved_dyn, 0, sizeof(nitro->saved_dyn));
-	}
-	if (nitro_has_cap(nitro, NITRO_CAP_PLATFORM_PROFILE)) {
-		if (nitro->quirks->profile_backend == NITRO_PROFILE_FTBL &&
-			!nitro_get_ftbl(&d)) {
-			nitro->saved_profile = d;
-			nitro->have_profile = true;
-		} else if (
-			nitro->quirks->profile_backend == NITRO_PROFILE_OPMS &&
-			!nitro_get_misc(NITRO_MISC_OPMS, &d)) {
-			nitro->saved_profile = d;
-			nitro->have_profile = true;
-		}
-	}
 	nitro->have_saved = true;
+	return ok;
+}
+
+/*
+ * Record one reason per missing capability so userspace can explain a control
+ * that the quirk table declared but the load had to drop.
+ */
+static void nitro_prune_add(
+	struct nitro_device *nitro,
+	const char *cap,
+	const char *why)
+{
+	size_t len = strlen(nitro->prune_report);
+	size_t size = sizeof(nitro->prune_report);
+
+	if (len + strlen(cap) + strlen(why) + 3 > size)
+		return;
+	scnprintf(nitro->prune_report + len, size - len,
+		"%s=%s\n", cap, why);
+}
+
+/*
+ * Collect a name and a reason for everything a failed baseline read removed,
+ * so the log carries one line instead of one warning per read.
+ */
+static void nitro_prune_note(
+	char *buf,
+	size_t size,
+	size_t *len,
+	const char *what,
+	const char *why)
+{
+	if (*len)
+		*len += scnprintf(buf + *len, size - *len, ", ");
+	*len += scnprintf(buf + *len, size - *len, "%s (%s)", what, why);
+}
+
+/*
+ * Drop capabilities whose baseline read failed. The quirk table still decides
+ * what a model should have; this only removes what the machine in front of us
+ * cannot answer for, so an unexpected firmware difference degrades instead of
+ * exposing controls that cannot work. An empty dynamic state is a successful
+ * read, not a failure. Probe mode skips this so the survey can show which read
+ * failed instead of silently hiding it.
+ */
+static void nitro_prune_capabilities(struct nitro_device *nitro)
+{
+	char pruned[192];
+	size_t len = 0;
+
+	if (
+		(nitro->capabilities & NITRO_CAP_FAN) &&
+		!nitro->have_fan_cpu) {
+		nitro->capabilities &= ~(NITRO_CAP_FAN | NITRO_CAP_FAN_MODE |
+			NITRO_CAP_COOLBOOST);
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"fan, fan_mode, coolboost", "fan read failed");
+		nitro_prune_add(nitro, "fan", "fan read failed");
+		nitro_prune_add(nitro, "fan_mode", "fan read failed");
+		nitro_prune_add(nitro, "coolboost", "fan read failed");
+	} else if (
+		(nitro->capabilities & NITRO_CAP_FAN) &&
+		nitro->quirks->fan_count >= 2 &&
+		!nitro->have_fan_gpu) {
+		/*
+		 * Keep CPU fan control, but do not expose GPU fan data that the
+		 * firmware could not answer for at load.
+		 */
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"fan_gpu", "GPU fan read failed");
+		nitro_prune_add(nitro, "fan_gpu", "GPU fan read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_FAN_MODE) &&
+		!nitro->have_fan_modes) {
+		nitro->capabilities &= ~(NITRO_CAP_FAN_MODE |
+			NITRO_CAP_COOLBOOST);
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"fan_mode, coolboost", "fan mode read failed");
+		nitro_prune_add(nitro, "fan_mode", "fan mode read failed");
+		nitro_prune_add(nitro, "coolboost", "fan mode read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_COOLBOOST) &&
+		!nitro->have_coolboost) {
+		nitro->capabilities &= ~NITRO_CAP_COOLBOOST;
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"coolboost", "CoolBoost read failed");
+		nitro_prune_add(nitro, "coolboost", "CoolBoost read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_RGB) &&
+		!nitro->have_rgb) {
+		nitro->capabilities &= ~(NITRO_CAP_RGB | NITRO_CAP_RGB_DYNAMIC |
+			NITRO_CAP_LED_CLASS);
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"RGB, dynamic RGB, LED class", "RGB read failed");
+		nitro_prune_add(nitro, "rgb", "RGB read failed");
+		nitro_prune_add(nitro, "dyn", "RGB read failed");
+		nitro_prune_add(nitro, "led", "RGB read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_RGB_DYNAMIC) &&
+		!nitro->have_dyn_read) {
+		nitro->capabilities &= ~NITRO_CAP_RGB_DYNAMIC;
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"dynamic RGB", "dynamic RGB read failed");
+		nitro_prune_add(nitro, "dyn", "dynamic RGB read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_PLATFORM_PROFILE) &&
+		!nitro->have_profile) {
+		nitro->capabilities &= ~NITRO_CAP_PLATFORM_PROFILE;
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"platform profile", "profile read failed");
+		nitro_prune_add(nitro, "profile", "profile read failed");
+	}
+	if (
+		(nitro->capabilities & NITRO_CAP_KBD_TIMEOUT) &&
+		!nitro->have_kbd_timeout) {
+		nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+		nitro_prune_note(pruned, sizeof(pruned), &len,
+			"keyboard timeout", "read failed");
+		nitro_prune_add(nitro, "kbd_timeout",
+			"keyboard timeout read failed");
+	}
+	if (len)
+		pr_warn("pruned capabilities: %s\n", pruned);
 }
 
 static void nitro_log_state(struct nitro_device *nitro)
 {
+	const char *model = dmi_get_system_info(DMI_PRODUCT_NAME);
+	const char *board = dmi_get_system_info(DMI_BOARD_NAME);
+	const char *bios = dmi_get_system_info(DMI_BIOS_VERSION);
 	u8 duty, ftbl, r, g, b, v0, v1, tkst, opms;
 	u8 dyn[16] = { 0 };
 	unsigned int nzones = nitro_zone_count(nitro);
 
-	pr_info("board %s (tested BIOS %s)\n",
-		nitro->quirks->board, nitro->quirks->tested_bios);
+	pr_info("model %s (board %s, BIOS %s)\n",
+		model ? model : "unknown",
+		board ? board : "unknown",
+		bios ? bios : "unknown");
 	if (
 		nitro_has_cap(nitro, NITRO_CAP_FAN) &&
 		!nitro_get_fan(NITRO_FAN_CPU, &duty))
@@ -3629,6 +3878,7 @@ static int __init nitro_init(void)
 		pr_warn("APGE WMI GUID %s missing; disabling keyboard timeout\n",
 			NITRO_APGE_GUID);
 		nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+		nitro_prune_add(nitro, "kbd_timeout", "APGE WMI GUID missing");
 	}
 
 	nitro_pdev = platform_device_register_simple("nitro", -1, NULL, 0);
@@ -3645,20 +3895,32 @@ static int __init nitro_init(void)
 	if (nitro_has_cap(nitro, NITRO_CAP_HWMON))
 		nitro_read_sensors(nitro);
 	if (!nitro->probe_mode) {
-		nitro_save_initial(nitro);
-		if (
-			(nitro->capabilities & NITRO_CAP_KBD_TIMEOUT) &&
-			!nitro->have_kbd_timeout) {
-			pr_warn("keyboard timeout read failed; disabling\n");
-			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+		unsigned int attempt;
+
+		if (inject_read_failures)
+			pr_warn("inject_read_failures=0x%x: selected baseline reads will fail\n",
+				inject_read_failures);
+		/*
+		 * A cold boot can reach the module before the EC answers the
+		 * first WMI call, so retry only the reads that failed.
+		 */
+		for (attempt = 0; attempt < NITRO_BASELINE_TRIES; attempt++) {
+			if (nitro_save_initial(nitro))
+				break;
+			if (attempt + 1 < NITRO_BASELINE_TRIES)
+				msleep(NITRO_BASELINE_RETRY_MS);
 		}
+		nitro_prune_capabilities(nitro);
 	} else if (nitro_has_cap(nitro, NITRO_CAP_KBD_TIMEOUT)) {
 		u8 timeout_on;
 
 		if (!nitro_get_kbd_timeout(nitro, &timeout_on))
 			nitro->cur_kbd_timeout = timeout_on;
-		else
+		else {
 			nitro->capabilities &= ~NITRO_CAP_KBD_TIMEOUT;
+			nitro_prune_add(nitro, "kbd_timeout",
+				"keyboard timeout read failed");
+		}
 	}
 	nitro_log_state(nitro);
 	mutex_unlock(&nitro->lock);
@@ -3676,6 +3938,7 @@ static int __init nitro_init(void)
 			ret = PTR_ERR(hwmon);
 			pr_warn("hwmon register failed %d; continuing without hwmon\n", ret);
 			nitro->capabilities &= ~NITRO_CAP_HWMON;
+			nitro_prune_add(nitro, "hwmon", "hwmon register failed");
 		}
 	}
 
@@ -3684,6 +3947,7 @@ static int __init nitro_init(void)
 		if (ret) {
 			pr_warn("led register failed %d; continuing without led class\n", ret);
 			nitro->capabilities &= ~NITRO_CAP_LED_CLASS;
+			nitro_prune_add(nitro, "led", "LED register failed");
 		}
 
 		if (
@@ -3698,6 +3962,8 @@ static int __init nitro_init(void)
 				ret = PTR_ERR(pp);
 				pr_warn("platform_profile register failed %d; continuing without it\n", ret);
 				nitro->capabilities &= ~NITRO_CAP_PLATFORM_PROFILE;
+				nitro_prune_add(nitro, "profile",
+					"platform profile register failed");
 			}
 		}
 	}

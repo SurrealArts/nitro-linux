@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import pathlib
 
@@ -23,6 +23,27 @@ PROFILE_OPMS = 2
 COOLBOOST_NONE = 0
 COOLBOOST_EC10 = 1
 
+PRUNE_ALIASES = {
+    "fan_cpu": ("fan",),
+    "fan_gpu": ("fan_gpu", "fan"),
+    "fan_mode": ("fan_mode", "fan"),
+    "ftbl": ("profile",),
+    "kbd_static": ("rgb", "kbd_static"),
+    "kbd_dynamic": ("rgb", "dyn", "kbd_dynamic"),
+    "kbd_zone1": ("rgb",),
+    "coolboost": ("coolboost",),
+    "kbd_timeout": ("kbd_timeout",),
+    "ec_cpu_temp": ("hwmon", "ec_cpu_temp"),
+    "platform_profile": ("profile",),
+}
+
+
+def prune_reason_for(pruned: dict, key: str) -> str:
+    for alias in PRUNE_ALIASES.get(key, (key,)):
+        if alias in pruned:
+            return pruned[alias]
+    return ""
+
 
 @dataclass(frozen=True)
 class NitroQuirks:
@@ -32,12 +53,14 @@ class NitroQuirks:
     profile_backend: int
     coolboost_backend: int
     fan_count: int
-    board_name: Optional[str] = None
-    tested_bios: Optional[str] = None
     probe: bool = False
+    pruned: dict = field(default_factory=dict, compare=False)
 
     def has_cap(self, cap: int) -> bool:
         return bool(self.capabilities & cap)
+
+    def prune_reason(self, key: str) -> str:
+        return prune_reason_for(self.pruned, key)
 
     def capability_dict(self) -> dict:
         caps = {}
@@ -110,7 +133,23 @@ def read_kernel_capabilities() -> Optional[dict]:
     return caps
 
 
-def _quirks_from_kernel(caps: dict) -> NitroQuirks:
+def read_kernel_pruned() -> dict:
+    path = pathlib.Path("/sys/devices/platform/nitro/pruned")
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return {}
+    if not text or text == "none":
+        return {}
+    pruned = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, reason = line.split("=", 1)
+            pruned[key.strip()] = reason.strip()
+    return pruned
+
+
+def _quirks_from_kernel(caps: dict, pruned: Optional[dict] = None) -> NitroQuirks:
     fan = caps.get("fan") == "1"
     fan_mode = caps.get("fan_mode") == "1"
     hwmon = caps.get("hwmon") == "1"
@@ -170,6 +209,7 @@ def _quirks_from_kernel(caps: dict) -> NitroQuirks:
         ),
         fan_count=fan_count,
         probe=caps.get("probe") == "1",
+        pruned=pruned or {},
     )
 
 
@@ -187,7 +227,7 @@ def get_quirks() -> NitroQuirks:
     kernel_caps = read_kernel_capabilities()
     if kernel_caps is not None:
         try:
-            return _quirks_from_kernel(kernel_caps)
+            return _quirks_from_kernel(kernel_caps, read_kernel_pruned())
         except (TypeError, ValueError):
             return UNKNOWN_QUIRKS
     return UNKNOWN_QUIRKS
@@ -225,8 +265,6 @@ EFFECT_DEFAULTS = {
 def main():
     q = get_quirks()
     print(f"Product: {_dmi('product_name')}")
-    print(f"Board: {_dmi('board_name')}")
-    print(f"BIOS: {_dmi('bios_version')}")
     print(f"Capabilities: {q.capabilities_string()}")
     print(f"RGB zones: {q.rgb_zones}")
     print(f"Dynamic effects: {q.dynamic_effects}")
@@ -237,6 +275,10 @@ def main():
     print(f"Has platform_profile: {q.has_cap(CAP_PLATFORM_PROFILE)}")
     print(f"Has led_class: {q.has_cap(CAP_LED_CLASS)}")
     print(f"Has kbd_timeout: {q.has_cap(CAP_KBD_TIMEOUT)}")
+    if q.pruned:
+        print("Pruned at load:")
+        for key in sorted(q.pruned):
+            print(f"  {key}: {q.pruned[key]}")
     print(f"Zones: {ZONES}")
     print(f"Effects: {EFFECTS}")
 

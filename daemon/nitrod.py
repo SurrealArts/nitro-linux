@@ -686,6 +686,7 @@ def cmd_status(arg):
         "data": snap,
         "desired": s,
         "source": ac_source(),
+        "pruned": dict(QUIRKS.pruned),
         "ts": snap.get("ts", time.time()),
         "daemon": {"uptime_s": int(time.time() - start_ts)},
     }

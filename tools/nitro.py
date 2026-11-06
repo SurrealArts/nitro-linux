@@ -98,6 +98,10 @@ def status():
     for name, enabled in attrs:
         if enabled and (BASE / name).is_file():
             print(f"{name}: {read(name)}")
+            continue
+        reason = QUIRKS.prune_reason(name)
+        if reason:
+            print(f"{name}: unavailable ({reason})")
     profile_path = find_platform_profile()
     if profile_path:
         try:
@@ -432,7 +436,8 @@ def report():
     out.append("[DMI]")
     for field in [
         "sys_vendor", "product_name", "board_name", "board_vendor",
-        "bios_version", "bios_date", "chassis_vendor", "chassis_version"]:
+        "bios_version", "bios_date", "chassis_vendor", "chassis_version",
+    ]:
         out.append(f"{field}: {_redact(_dmi(field))}")
     out.append("")
 
@@ -445,6 +450,14 @@ def report():
         kind = "unknown"
     out.append(f"detected: {kind}")
     out.append(f"userspace caps: {QUIRKS.capabilities_string() or 'none'}")
+    out.append("")
+
+    out.append("[pruned]")
+    if QUIRKS.pruned:
+        for key in sorted(QUIRKS.pruned):
+            out.append(f"  {key}: {QUIRKS.pruned[key]}")
+    else:
+        out.append("  none")
     out.append("")
 
     out.append("[WMI]")

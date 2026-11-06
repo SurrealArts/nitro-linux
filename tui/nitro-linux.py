@@ -69,6 +69,7 @@ from model import (
     get_zones,
     get_effects,
     get_effect_names,
+    prune_reason_for,
     CAP_FAN,
     CAP_FAN_MODE,
     CAP_HWMON,
@@ -125,6 +126,16 @@ def clamp_refresh(ms):
     ms = int(round(ms / float(REFRESH_STEP))) * REFRESH_STEP
     return max(REFRESH_MIN, min(REFRESH_MAX, ms))
 
+def hex_rgb(h):
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def darken_hex(h, factor=0.65):
+    r, g, b = hex_rgb(h)
+    return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
+
+
 THEME = {
     "fg": "#ece0d9",
     "dim": "#958a80",
@@ -132,7 +143,10 @@ THEME = {
     "ok": "#b8d97a",
     "mid": "#ffb878",
     "hot": "#ff5f5f",
+    "key": "#7f756d",
 }
+THEME["key_acc"] = darken_hex(THEME["acc"])
+THEME["key_mid"] = darken_hex(THEME["mid"])
 
 
 def hex_to_256(h):
@@ -152,10 +166,13 @@ class C:
     HOT = 6
     G_OK = 7
     G_B = 8
+    KEY = 9
+    K_ACC = 10
+    K_MID = 11
 
 
 _pair_cache = {}
-_next_pair = [10]
+_next_pair = [12]
 
 
 def init_theme():
@@ -164,7 +181,9 @@ def init_theme():
     if curses.COLORS >= 256:
         for pair, key in (
             (C.FG, "fg"), (C.DIM, "dim"), (C.ACC, "acc"),
-            (C.OK, "ok"), (C.MID, "mid"), (C.HOT, "hot")):
+            (C.OK, "ok"), (C.MID, "mid"), (C.HOT, "hot"),
+            (C.KEY, "key"), (C.K_ACC, "key_acc"),
+            (C.K_MID, "key_mid")):
             try:
                 curses.init_pair(pair, hex_to_256(THEME[key]), -1)
             except curses.error:
@@ -178,7 +197,9 @@ def init_theme():
         for pair, col in (
             (C.FG, curses.COLOR_WHITE), (C.DIM, curses.COLOR_BLACK),
             (C.ACC, curses.COLOR_RED), (C.OK, curses.COLOR_GREEN),
-            (C.MID, curses.COLOR_YELLOW), (C.HOT, curses.COLOR_RED)):
+            (C.MID, curses.COLOR_YELLOW), (C.HOT, curses.COLOR_RED),
+            (C.KEY, curses.COLOR_WHITE), (C.K_ACC, curses.COLOR_RED),
+            (C.K_MID, curses.COLOR_YELLOW)):
             try:
                 curses.init_pair(pair, col, -1)
             except curses.error:
@@ -362,9 +383,12 @@ class UI:
         self.temp_f = cfg["temp_f"]
         self.sel_zone = 0
         self.editor = None
+        self.numedit = None
         self.msg = ""
         self.msg_time = 0.0
         self.show_help = False
+        self.show_degraded = False
+        self.degraded_t = 0.0
         self.clicks = []
         self.eclicks = []
         self.swatches = []
@@ -428,7 +452,9 @@ class UI:
             self.addstr(y + i, x, "│" + " " * (w - 2) + "│", bp)
         self.addstr(y + h - 1, x, "╰" + "─" * (w - 2) + "╯", bp)
         lab = label[:max(0, w - 2)]
-        self.addstr(y + (h - 1) // 2, x + max(1, (w - len(lab)) // 2), lab, lp)
+        self.keybinds(
+            y + (h - 1) // 2, x + max(1, (w - len(lab)) // 2), lab, lp,
+            selected=active)
         if action is not None:
             self.click(y, x, h, w, action)
         return y + h
@@ -451,9 +477,13 @@ class UI:
         self.addstr(y, x + w1, "─" * max(0, w2 - 2), e1)
         self.addstr(y, x + w - 1, "╮", e1)
         self.addstr(y + 1, x, "│", e0)
-        self.addstr(y + 1, x + 1 + max(0, (w1 - 2 - len(t0)) // 2), t0, l0)
+        self.keybinds(
+            y + 1, x + 1 + max(0, (w1 - 2 - len(t0)) // 2), t0, l0,
+            selected=s0)
         self.addstr(y + 1, xd, "│", acc)
-        self.addstr(y + 1, x + w1 + max(0, (w2 - 2 - len(t1)) // 2), t1, l1)
+        self.keybinds(
+            y + 1, x + w1 + max(0, (w2 - 2 - len(t1)) // 2), t1, l1,
+            selected=s1)
         self.addstr(y + 1, x + w - 1, "│", e1)
         self.addstr(y + 2, x, "╰" + "─" * max(0, w1 - 2), e0)
         self.addstr(y + 2, xd, "┴", acc)
@@ -496,6 +526,113 @@ class UI:
                 break
         return cx
 
+    def keybind_attr(self, base, selected=False, pair=C.ACC):
+        if selected:
+            if base & curses.A_REVERSE:
+                if curses.COLORS < 256:
+                    return base
+                key = "key_mid" if pair == C.MID else "key_acc"
+                fill = "mid" if pair == C.MID else "acc"
+                return rgb_bg(
+                    *hex_rgb(THEME[fill]),
+                    fg=hex_to_256(THEME[key])) | (
+                        base & (curses.A_BOLD | curses.A_UNDERLINE))
+            kp = C.K_MID if pair == C.MID else C.K_ACC
+            return curses.color_pair(kp) | (
+                base & (curses.A_BOLD | curses.A_UNDERLINE))
+        kp = C.KEY
+        return curses.color_pair(kp) | (
+            base & (curses.A_BOLD | curses.A_REVERSE | curses.A_UNDERLINE))
+
+    def keybinds(self, y, x, text, base, selected=False, pair=C.ACC):
+        keyattr = self.keybind_attr(base, selected, pair)
+        cx = x
+        i = 0
+        while i < len(text):
+            if text[i] != "(":
+                j = text.find("(", i)
+                if j < 0:
+                    j = len(text)
+                self.addstr(y, cx, text[i:j], base)
+                cx += j - i
+                i = j
+                continue
+            j = text.find(")", i + 1)
+            if j < 0:
+                self.addstr(y, cx, text[i:], base)
+                return cx + len(text) - i
+            hint = text[i + 1:j]
+            self.addstr(y, cx, text[i:j + 1], base
+                        if hint == "unavailable" else keyattr)
+            cx += j + 1 - i
+            i = j + 1
+        return cx
+
+    def num_field(self, kind, which=None):
+        n = self.numedit
+        if n and n["kind"] == kind and n.get("which") == which:
+            return n
+        return None
+
+    def num_current(self, kind, which=None):
+        if kind == "duty":
+            v = self.duty(which)
+            return 0 if v is None else v
+        if kind == "speed":
+            d = self.dyn()
+            return d["effects"][d["mode"]]["speed"]
+        return self.brightness()
+
+    def open_num(self, kind, which=None):
+        self.numedit = {
+            "kind": kind, "which": which,
+            "buf": str(self.num_current(kind, which)), "fresh": True}
+
+    def numedit_key(self, ch):
+        n = self.numedit
+        if not n:
+            return
+        buf = n["buf"]
+        if ch == 27:
+            self.numedit = None
+            return
+        if ch in (10, 13):
+            if not buf:
+                self.msg = "!! enter a number"
+                self.msg_time = time.time()
+                return
+            val = int(buf)
+            kind = n["kind"]
+            if kind == "speed":
+                ok, limit = 1 <= val <= 10, "1-10"
+            else:
+                ok, limit = 0 <= val <= 100, "0-100"
+            if not ok:
+                self.msg = f"!! {kind} must be {limit}"
+                self.msg_time = time.time()
+                return
+            self.numedit = None
+            if kind == "duty":
+                self.set_duty(n["which"], val)
+            elif kind == "speed":
+                self.set_dyn(f"speed → {val}", speed=val)
+            else:
+                self.set_brightness(val)
+            return
+        if ch in (curses.KEY_BACKSPACE, 8, 127, 263):
+            n["fresh"] = False
+            n["buf"] = buf[:-1]
+            return
+        if ch > 0x10FFFF:
+            return
+        c = chr(ch)
+        if c.isdigit():
+            if n["fresh"]:
+                buf, n["fresh"] = "", False
+            max_digits = 2 if n["kind"] == "speed" else 3
+            if len(buf) < max_digits:
+                n["buf"] = buf + c
+
     @property
     def live(self):
         return self.snap.get("data", {}) or {}
@@ -508,12 +645,38 @@ class UI:
     def source(self):
         return self.snap.get("source")
 
+    def prune_map(self):
+        pruned = self.snap.get("pruned")
+        return pruned if isinstance(pruned, dict) else QUIRKS.pruned
+
+    def prune_reason(self, key):
+        return prune_reason_for(self.prune_map(), key)
+
+    def unavailable(self, label, key, width):
+        text = f"{label} unavailable"
+        reason = self.prune_reason(key)
+        if reason:
+            text += f": {reason}"
+        return text[:max(1, width)]
+
+    def unavailable_msg(self, label, key):
+        reason = self.prune_reason(key)
+        if reason:
+            return f"!! {label} unavailable ({reason})"
+        return f"!! {label} unavailable (not supported on this model)"
+
     def plan_src(self):
         return self.plan_tab or ("battery" if self.source == "battery" else "ac")
 
     def open_help(self):
         self.show_help = True
         self.help_t = time.time()
+        self.show_degraded = False
+
+    def open_degraded(self):
+        self.show_degraded = True
+        self.degraded_t = time.time()
+        self.show_help = False
 
     def open_url(self, url):
         try:
@@ -554,7 +717,7 @@ class UI:
     def toggle_kbd_timeout(self):
         on = self.kbd_timeout_live()
         if on is None:
-            self.msg = "!! keyboard timeout unavailable (not supported on this model)"
+            self.msg = self.unavailable_msg("keyboard timeout", "kbd_timeout")
             self.msg_time = time.time()
             return
         self.send(
@@ -568,7 +731,7 @@ class UI:
             return
         on = self.coolboost_live()
         if on is None:
-            self.msg = "!! CoolBoost unavailable (not supported on this model)"
+            self.msg = self.unavailable_msg("CoolBoost", "coolboost")
             self.msg_time = time.time()
             return
         self.send(
@@ -707,17 +870,24 @@ class UI:
             x += 18
         if self.live.get("driver") not in (None, "ok"):
             self.addstr(0, x, "driver missing", curses.color_pair(C.HOT) | curses.A_BOLD)
+        grp = f"- {self.refresh_ms}ms +"
+        xg = w - 2 - len(grp)
+        xq = xg - 2
+        badge = "DEGRADED (g)" if self.prune_map() else ""
+        xb = xq - 3 - len(badge)
         if self.msg:
             txt = f" {self.msg} "
             tx = max(x + 16, (w - len(txt)) // 2)
+            right = xb - 2 if badge else w - 18
             attr = (rgb_attr(255, 95, 95, bold=True) if self.msg.startswith("!!")
                     else rgb_attr(184, 217, 122, bold=True))
-            self.addstr(0, tx, txt[:max(0, w - tx - 18)], attr)
-        grp = f"- {self.refresh_ms}ms +"
-        xg = w - 2 - len(grp)
-        xq = xg - 4
-        self.addstr(0, xq, " ? ", curses.color_pair(C.DIM) | curses.A_BOLD)
-        self.click(0, xq, 1, 3, ("help",))
+            self.addstr(0, tx, txt[:max(0, right - tx)], attr)
+        if badge:
+            self.keybinds(
+                0, xb, badge, curses.color_pair(C.HOT) | curses.A_BOLD)
+            self.click(0, xb, 1, len(badge), ("degraded",))
+        self.addstr(0, xq, "?", curses.color_pair(C.DIM) | curses.A_BOLD)
+        self.click(0, xq, 1, 1, ("help",))
         self.addstr(0, xg, grp, curses.color_pair(C.DIM) | curses.A_BOLD)
         self.addstr(0, xg + 2, f"{self.refresh_ms}ms", curses.color_pair(C.FG) | curses.A_BOLD)
         self.click(0, xg, 1, 2, ("refresh", -1))
@@ -772,21 +942,29 @@ class UI:
         if not hasattr(self, '_unavailable_logged'):
             self._unavailable_logged = True
             if not has_fan:
-                log_unavailable("Fan Control", "CAP_FAN missing")
+                log_unavailable("Fan Control",
+                    self.prune_reason("fan_cpu") or "CAP_FAN missing")
             if not has_fan_mode:
-                log_unavailable("Fan Monitor", "CAP_FAN_MODE missing")
+                log_unavailable("Fan Monitor",
+                    self.prune_reason("fan_mode") or "CAP_FAN_MODE missing")
             if not has_profile:
-                log_unavailable("Power Plan", "CAP_PLATFORM_PROFILE missing")
+                log_unavailable("Power Plan",
+                    self.prune_reason("platform_profile") or
+                    "CAP_PLATFORM_PROFILE missing")
             if not has_thermal:
-                log_unavailable("Thermal Monitoring", "CAP_HWMON missing")
+                log_unavailable("Thermal Monitoring",
+                    self.prune_reason("hwmon") or "CAP_HWMON missing")
             if not has_rgb:
-                log_unavailable("Keyboard RGB", "CAP_RGB missing")
+                log_unavailable("Keyboard RGB",
+                    self.prune_reason("rgb") or "CAP_RGB missing")
             if not has_dyn:
-                log_unavailable("Dynamic Effects", "CAP_RGB_DYNAMIC missing")
+                log_unavailable("Dynamic Effects",
+                    self.prune_reason("dyn") or "CAP_RGB_DYNAMIC missing")
             if not has_cool:
-                log_unavailable("CoolBoost", "CAP_COOLBOOST missing")
+                log_unavailable("CoolBoost",
+                    self.prune_reason("coolboost") or "CAP_COOLBOOST missing")
         self.topbar()
-        if self.editor or self.show_help:
+        if self.editor or self.show_help or self.show_degraded:
             try:
                 for yy in range(h):
                     s.chgat(yy, 0, w, curses.color_pair(C.DIM))
@@ -802,6 +980,8 @@ class UI:
             self.clicks = base
         if self.show_help:
             self.help_overlay()
+        if self.show_degraded:
+            self.degraded_overlay()
         if os.environ.get("NITRO_TUI_DUMP_RECTS"):
             try:
                 with open(os.environ["NITRO_TUI_DUMP_RECTS"], "w") as f:
@@ -814,12 +994,13 @@ class UI:
 
     def draw_coolboost(self, y, px, cur, pw=None):
         if not QUIRKS.has_cap(CAP_COOLBOOST):
-            text = "CoolBoost unavailable"
+            text = self.unavailable(
+                "CoolBoost", "coolboost", (pw - 2) if pw else 80)
             x = px + 1
             if pw:
                 inner_w = pw - 2
                 x = px + 1 + max(0, (inner_w - len(text)) // 2)
-            self.addstr(y, x, text, curses.color_pair(C.DIM))
+            self.keybinds(y, x, text, curses.color_pair(C.DIM))
             return
         on = self.coolboost_live()
         if on is None:
@@ -838,12 +1019,12 @@ class UI:
             attr = curses.color_pair(C.FG) | curses.A_BOLD
         else:
             attr = curses.color_pair(C.DIM)
-        self.addstr(y, x, text, attr)
+        self.keybinds(y, x, text, attr)
         self.click(y, x, 1, len(text), ("coolboost",))
 
     def draw_fan_control(self, py, px, ph, pw):
         if not QUIRKS.has_cap(CAP_FAN):
-            text = "Fan control unavailable"
+            text = self.unavailable("Fan control", "fan_cpu", pw - 2)
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
@@ -876,7 +1057,8 @@ class UI:
 
     def draw_power(self, py, px, ph, pw):
         if not QUIRKS.has_cap(CAP_PLATFORM_PROFILE):
-            text = "Power profiles unavailable"
+            text = self.unavailable(
+                "Power profiles", "platform_profile", pw - 2)
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
@@ -925,7 +1107,7 @@ class UI:
 
     def draw_fan_monitor(self, py, px, ph, pw):
         if not QUIRKS.has_cap(CAP_FAN_MODE):
-            text = "Fan monitor unavailable"
+            text = self.unavailable("Fan monitor", "fan_mode", pw - 2)
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
@@ -937,7 +1119,8 @@ class UI:
         gpu_m = self.state_fan_mode("gpu")
         gx0 = x0
         if cpu_m == "custom" or gpu_m == "custom":
-            gx0 = min(x0 + 20, max(x0, x1 - 20))
+            gx0 = min(x0 + 25, max(x0, x1 - 20))
+            gx0 += 1
             self.draw_sliders(x0 + 3, y0 + 1, y1, cpu_m, gpu_m)
         R = y1 - y0 + 1
         ta = max(1, (R - 3) // 2)
@@ -959,7 +1142,7 @@ class UI:
             return
         cols = [("CPU", x0 + 3, "cpu", "/", ".", cpu_m, C.ACC)]
         if QUIRKS.fan_count >= 2:
-            cols.append(("GPU", x0 + 12, "gpu", "'", ";", gpu_m, C.MID))
+            cols.append(("GPU", x0 + 15, "gpu", "'", ";", gpu_m, C.MID))
         for name, cx, which, kup, kdn, mode, pair in cols:
             active = mode == "custom"
             raw = self.duty(which)
@@ -967,20 +1150,36 @@ class UI:
             d = curses.color_pair(C.DIM)
             a = curses.color_pair(pair) | curses.A_BOLD if active else d
             self.addstr(ytop, cx - 1, name, d | curses.A_BOLD)
-            self.addstr(ytop + 1, cx - 1, f"({kup})", d)
+            self.keybinds(
+                ytop + 1, cx - 1, f"({kup})", a if active else d,
+                selected=active, pair=pair)
             knob = ty1 - int(round(duty / 100.0 * (ty1 - ty0)))
             for yy in range(ty0, ty1 + 1):
                 self.addstr(yy, cx, "●" if yy == knob else "┃", a if yy == knob else d)
-            if raw is None:
-                label = "  --%"
-            elif duty == 0:
-                label = "0% fw min"
+            edit = self.num_field("duty", which)
+            if edit:
+                label = edit["buf"] + ("_" if len(edit["buf"]) < 3 else "")
+                labelattr = curses.color_pair(C.ACC) | curses.A_BOLD | curses.A_REVERSE
+            elif raw is None:
+                label = "--%"
+                labelattr = a
             else:
-                label = f"{duty:3d}%"
-            self.addstr(ybot - 2, cx - 1, label, a)
-            self.addstr(ybot - 1, cx - 1, f"({kdn})", d)
+                label = f"{duty}%"
+                labelattr = a
+            lx = cx - (len(label) - 1) // 2
+            self.keybinds(
+                ybot - 2, cx - 1, f"({kdn})", a if active else d,
+                selected=active, pair=pair)
+            self.addstr(ybot - 1, lx, label, labelattr)
+            focus = "n" if which == "cpu" else "m"
+            nx = cx + 4
+            self.keybinds(
+                ybot - 1, nx, f"({focus})", a if active else d,
+                selected=active, pair=pair)
             if active:
                 self.click(ty0, cx - 1, ty1 - ty0 + 1, 3, ("duty_abs", which, ty0, ty1))
+                self.click(ybot - 1, lx, 1, max(1, len(label)), ("numedit", "duty", which))
+                self.click(ybot - 1, nx, 1, 3, ("numedit", "duty", which))
 
     def _thermal_models(self):
         import re as _re
@@ -1046,7 +1245,7 @@ class UI:
 
     def draw_thermal(self, py, px, ph, pw):
         if not QUIRKS.has_cap(CAP_HWMON):
-            text = "Thermal monitoring unavailable"
+            text = self.unavailable("Thermal monitoring", "hwmon", pw - 2)
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
@@ -1105,32 +1304,33 @@ class UI:
                 yy, x0, f"GPU : {gpu_disp}",
                 curses.color_pair(C.MID) | curses.A_BOLD)
         kx = max(x0, x1 - 2)
-        self.addstr(y0, kx, "(F)", curses.color_pair(C.DIM))
+        self.addstr(y0, kx, "(F)", curses.color_pair(C.KEY))
         self.click(y0, kx, 1, 3, ("temp",))
 
-    def draw_kbd_timeout(self, y, x0):
+    def draw_kbd_timeout(self, y, x0, width):
         label = "(k) Backlight 30s Timeout"
         if not QUIRKS.has_cap(CAP_KBD_TIMEOUT):
-            self.addstr(
-                y, x0, f"{label} unavailable", curses.color_pair(C.DIM))
+            self.keybinds(
+                y, x0, self.unavailable(label, "kbd_timeout", width),
+                curses.color_pair(C.DIM))
             return
         on = self.kbd_timeout_live()
         state = "--" if on is None else ("● ON" if on else "○ OFF")
         text = f"{label}  {state}"
         attr = curses.color_pair(C.FG) | curses.A_BOLD
-        self.addstr(y, x0, text, attr)
+        self.keybinds(y, x0, text, attr)
         self.click(y, x0, 1, len(text), ("kbdtimeout",))
 
     def draw_keyboard(self, py, px, ph, pw):
         x0, x1 = px + 1, px + pw - 2
         y0, y1 = py + 1, py + ph - 2
         if not QUIRKS.has_cap(CAP_RGB):
-            text = "Keyboard RGB unavailable"
+            text = self.unavailable("Keyboard RGB", "rgb", pw - 2)
             inner_w = pw - 2
             x = px + 1 + max(0, (inner_w - len(text)) // 2)
             y = py + ph // 2
             self.addstr(y, x, text, curses.color_pair(C.DIM))
-            self.draw_kbd_timeout(y0 + 1, x0)
+            self.draw_kbd_timeout(y0 + 1, x0, x1 - x0 + 1)
             return
         mode = self.kbd_mode()
         tabs = [("static", "([) Static", ("tab", "static"))]
@@ -1139,14 +1339,15 @@ class UI:
         else:
             tabs.append(("dynamic", "(]) Dynamic (unavailable)", ("tab", "dynamic")))
         self.seg_tabs(y0, x0, x1 - x0 + 1, tabs, mode)
-        self.draw_kbd_timeout(y0 + 3, x0)
+        self.draw_kbd_timeout(y0 + 3, x0, x1 - x0 + 1)
         if mode == "static":
             self.draw_static(x0, y0 + 5, x1, y1)
         else:
             if QUIRKS.has_cap(CAP_RGB_DYNAMIC):
                 self.draw_dynamic(x0, y0 + 5, x1, y1)
             else:
-                text = "Dynamic effects unavailable"
+                text = self.unavailable(
+                    "Dynamic effects", "dyn", x1 - x0 + 1)
                 inner_w = x1 - x0 + 1
                 x = x0 + max(0, (inner_w - len(text)) // 2)
                 y = y0 + (y1 - y0) // 2
@@ -1159,7 +1360,8 @@ class UI:
         la = (
             curses.color_pair(C.ACC) | curses.A_BOLD if sel
             else curses.color_pair(C.FG))
-        self.addstr(y, x + max(0, (w - len(lab)) // 2), lab, la)
+        self.keybinds(
+            y, x + max(0, (w - len(lab)) // 2), lab, la, selected=sel)
         glyph = "●" if on else "○"
         ga = rgb_attr(*rgb, bold=True) if on else curses.color_pair(C.DIM)
         state = " on" if on else " off"
@@ -1187,19 +1389,34 @@ class UI:
         if by <= y1:
             bri = self.brightness()
             self.addstr(by, x0, "bright ", curses.color_pair(C.FG))
-            self.addstr(by, x0 + 7, "(l) ", curses.color_pair(C.DIM))
+            self.addstr(by, x0 + 7, "(l) ", curses.color_pair(C.KEY))
             x3 = x0 + 11
-            vtxt = f"(L) {bri:3d}%"
+            vtxt = f"(L) {bri:3d}% (u)"
             tw = max(8, min(30, x1 - x3 - len(vtxt)))
             t0, ti = self.slider(by, x3, tw, bri / 100.0, curses.color_pair(C.ACC))
-            self.addstr(by, x3 + tw + 1, vtxt, curses.color_pair(C.FG))
+            vx = x3 + tw + 1
+            self.keybinds(by, vx, "(L) ", curses.color_pair(C.FG))
+            num_x = vx + 4
+            edit = self.num_field("bright")
+            if edit:
+                ntxt = edit["buf"] + ("_" if len(edit["buf"]) < 3 else "")
+                nattr = curses.color_pair(C.ACC) | curses.A_BOLD | curses.A_REVERSE
+            else:
+                ntxt = f"{bri:3d}"
+                nattr = curses.color_pair(C.FG)
+            self.addstr(by, num_x, ntxt[:3], nattr)
+            self.addstr(by, num_x + 3, "%", curses.color_pair(C.FG))
+            self.click(by, num_x, 1, 3, ("numedit", "bright"))
+            ux = num_x + 5
+            self.keybinds(by, ux, "(u)", curses.color_pair(C.FG))
+            self.click(by, ux, 1, 3, ("numedit", "bright"))
             self.click(by, t0, 1, ti, ("bright_abs", t0, ti))
         hy = y + 6
         if hy <= y1:
             self.rich(
-                hy, x0, "*(x)* on/off    *(enter/#)* custom colour",
+                hy, x0, "*(enter/#)* custom colour    *(x)* on/off",
                 curses.color_pair(C.DIM), maxw=W)
-            self.click(hy, x0 + 14, 1, min(max(0, W - 14), 23), ("colourpicker",))
+            self.click(hy, x0, 1, min(W, 23), ("colourpicker",))
 
     def chip_flow(self, y, x, W, ylim, cur):
         cx = x
@@ -1215,7 +1432,7 @@ class UI:
             attr = (
                 curses.color_pair(C.ACC) | curses.A_BOLD | curses.A_REVERSE
                 if active else curses.color_pair(C.FG))
-            self.addstr(y, cx, f" {lab} ", attr)
+            self.keybinds(y, cx, f" {lab} ", attr, selected=active)
             self.click(y, cx, 1, cw, ("effect", m))
             cx += cw + 1
         return y + 1
@@ -1231,18 +1448,20 @@ class UI:
         if sy <= y1:
             self.row_slider(
                 sy, x0, x1, "speed", "(t)", "(T)", e["speed"] / 10.0,
-                f"{e['speed']}", "speed" in needs, C.ACC, ("dyn_speed",))
+                f"{e['speed']}", "speed" in needs, C.ACC, ("dyn_speed",),
+                num_kind="speed" if "speed" in needs else None)
         by = sy + 1
         if by <= y1:
             self.row_slider(
                 by, x0, x1, "bright", "(l)", "(L)", self.brightness() / 100.0,
-                f"{self.brightness()}", True, C.ACC, ("bright_abs",))
+                f"{self.brightness()}", True, C.ACC, ("bright_abs",),
+                num_kind="bright")
         dy = by + 1
         if dy <= y1:
             dir_on = "direction" in needs
             self.addstr(dy, x0, "direction", curses.color_pair(C.FG if dir_on else C.DIM))
             x = self.chip(
-                dy, x0 + 10, "(f)", curses.color_pair(C.DIM),
+                dy, x0 + 10, "(f)", curses.color_pair(C.KEY),
                 ("dyn_dirflip",) if dir_on else None) + 2
             for label, val in (("←", 2), ("→", 1)):
                 sel = e["direction"] == val
@@ -1284,18 +1503,45 @@ class UI:
 
     def row_slider(self,
         y, x, x1, label, klo, khi,
-        frac, val, active, pair, action):
+        frac, val, active, pair, action, num_kind=None):
         la = curses.color_pair(C.FG if active else C.DIM)
         self.addstr(y, x, f"{label:<9} ", la)
         x2 = x + 10
-        self.addstr(y, x2, f"{klo} ", curses.color_pair(C.DIM))
+        self.addstr(y, x2, f"{klo} ", curses.color_pair(C.KEY))
         x3 = x2 + len(klo) + 1
-        vtxt = f" {khi} {val:>3}"
-        tw = max(8, min(24, x1 - x3 - len(vtxt)))
+        prefix = f" {khi} "
+        focus_key = {"speed": "y", "bright": "u"}.get(num_kind)
+        suffix = f" ({focus_key})" if focus_key else ""
+        vtxt = f"{prefix}{val:>3}{suffix}"
+        tw = max(8, min(24, x1 - x3 - len(vtxt) + 1))
         t0, ti = self.slider(
             y, x3, tw, frac,
             curses.color_pair(pair if active else C.DIM))
-        self.addstr(y, x3 + tw + 1, vtxt, la)
+        self.keybinds(y, x3 + tw, prefix, la)
+        num_x = x3 + tw + len(prefix)
+        edit = self.num_field(num_kind) if num_kind else None
+        if edit:
+            max_digits = 2 if num_kind == "speed" else 3
+            cursor = "_" if len(edit["buf"]) < max_digits else ""
+            raw = edit["buf"] + cursor
+            nattr = curses.color_pair(C.ACC) | curses.A_BOLD | curses.A_REVERSE
+            if num_kind == "speed":
+                self.addstr(y, num_x, " ", la)
+                self.addstr(y, num_x + 1, f"{raw:>2}", nattr)
+                num_edit_x, num_edit_w = num_x + 1, 2
+            else:
+                self.addstr(y, num_x, f"{raw:>3}", nattr)
+                num_edit_x, num_edit_w = num_x, 3
+        else:
+            self.addstr(y, num_x, f"{val:>3}", la)
+            num_edit_x, num_edit_w = num_x, 3
+        if active and num_kind:
+            self.click(y, num_edit_x, 1, num_edit_w, ("numedit", num_kind))
+        if focus_key:
+            fx = num_x + 4
+            self.keybinds(y, fx, f"({focus_key})", la)
+            if active and num_kind:
+                self.click(y, fx, 1, 3, ("numedit", num_kind))
         if active and action:
             self.click(y, t0, 1, ti, action + (t0, ti))
         return t0, ti
@@ -1380,40 +1626,50 @@ class UI:
     def help_overlay(self):
         h, w = self.h, self.w
         body = [
-            ("h", "fans"),
-            ("b", "  *(a/A)* auto    *(s/S)* max    *(d/D)* custom"),
-            ("b", "  custom duty:  *(. /)* cpu -/+5     *(; ')* gpu -/+5"),
-            ("b", "  *(i)* CoolBoost toggle   (Auto only; disabled on Max/Custom)"),
+            ("h", "Fans"),
+            ("b", "  *(a/A)* auto     *(s/S)* max           *(d/D)* custom"),
+            ("b", "  custom duty:   *(./)* cpu -5/+5     *(;')* gpu -5/+5"),
+            ("b", "                 *(n)* set cpu value   *(m)* set gpu value"),
+            ("b", "  *(i)* toggle CoolBoost (Auto only)"),
             ("s", ""),
-            ("h", "power"),
-            ("b", "  *(Z)* power saver    *(X)* quiet    *(C)* balance"),
-            ("b", "  *(V)* balance acer    *(B)* high-performance"),
-            ("b", "  *(o)* AC Power tab   *(p)* Battery tab   (or click the tabs)"),
+            ("h", "Power"),
+            ("b", "  *(Z)* power saver    *(X)* quiet     *(C)* balance"),
+            ("b", "  *(V)* balance acer   *(B)* high-performance"),
+            ("b", "  *(o)* AC Power tab   *(p)* Battery tab"),
             ("b", "  the grey line under the tabs shows the live power source"),
             ("s", ""),
-            ("h", "keyboard"),
-            ("b", "  *([)* static      *(])* dynamic      (tab bar, clickable)"),
-            ("b", "  static    *(1-4)* zone   *(x)* on/off   *(enter/#)* custom colour"),
-            ("b", "  dynamic   *(1-5)* effect   *(t)* speed   *(f)* direction   *(#)* custom colour"),
-            ("b", "  brightness   *(l)*  *(L)*     30-sec timeout   *(k)*"),
+            ("h", "Keyboard"),
+            ("b", "  *([)* static         *(])* dynamic"),
+            ("b", "  static    *(1-4)* zone     *(x)* on/off"),
+            ("b", "  dynamic   *(1-5)* effect   *(k)* backlight 30-sec timeout"),
+            ("b", "            *(t/T)* speed    *(l/L)* brightness    *(f)* direction"),
+            ("b", "            *(y)* set speed  *(u)* set bright val"),
+            ("b", "  *(enter/#)* custom colour"),
             ("s", ""),
-            ("h", "thermal"),
-            ("b", "  *(F)*  switch °C / °F"),
-            ("h", "refresh"),
-            ("b", "  *(-)* faster    *(+)* slower      (top right, clickable)"),
-            ("h", "global"),
+            ("h", "Thermal"),
+            ("b", "  *(F)* switch °C / °F"),
+            ("s", ""),
+            ("h", "Degraded Load"),
+            ("b", "  click *DEGRADED* or press *(g)* to list dropped controls"),
+            ("s", ""),
+            ("h", "Refresh"),
+            ("b", "  *(-)* faster *(+)* slower"),
+            ("s", ""),
+            ("h", "Global"),
             ("b", "  *(R)* reapply saved state"),
             ("b", "  *(q/Q)* close the ui"),
             ("s", ""),
-            ("d", "every control is clickable and shows its key; any key closes"),
+            ("d", "Every control is clickable with visible keybinds"),
+            ("d", "Press anywhere or any key to close"),
         ]
-        width = min(max(len(t.replace("*", "")) for _, t in body) + 6, w - 4)
+        content_width = max(len(text) for _, text in body if text) + 4
+        width = min(max(60, content_width), w - 4)
         bh = len(body) + 2
         y0 = max(0, (h - bh) // 2)
         x0 = max(0, (w - width) // 2)
         for i in range(bh):
             self.addstr(y0 + i, x0, " " * width, 0)
-        self.box(y0, x0, bh, width, "help")
+        self.box(y0, x0, bh, width, "HELP")
         for i, (kind, text) in enumerate(body):
             if kind == "s":
                 continue
@@ -1421,6 +1677,71 @@ class UI:
                 curses.color_pair(C.FG) | curses.A_BOLD if kind == "h"
                 else curses.color_pair(C.DIM))
             self.rich(y0 + 1 + i, x0 + 2, text, base, maxw=width - 4)
+
+    def degraded_overlay(self):
+        h, w = self.h, self.w
+        names = {
+            "fan": "fan control",
+            "fan_gpu": "GPU fan",
+            "fan_mode": "fan mode",
+            "coolboost": "CoolBoost",
+            "rgb": "keyboard RGB",
+            "dyn": "dynamic effects",
+            "led": "LED class",
+            "profile": "power profiles",
+            "hwmon": "thermal sensors",
+            "ec_cpu_temp": "EC CPU temp",
+            "kbd_static": "static RGB",
+            "kbd_dynamic": "dynamic RGB",
+            "kbd_timeout": "keyboard timeout",
+        }
+        rows = sorted(
+            (names.get(k, k), str(v)) for k, v in self.prune_map().items())
+        if not rows:
+            rows = [("none", "no pruned capabilities reported")]
+        guide = [
+            ("b", "*nitro status*          # reasons and recent kernel log"),
+            ("b", "*nitro report*          # read-only report to attach"),
+            ("b", "*cat* "),
+        ]
+        guide_path = "/sys/devices/platform/nitro/pruned"
+        labelw = 18
+        header = "These controls were dropped because a baseline read failed:"
+        textw = max(
+            [len(header), 4 + labelw + 2 + max(len(r) for _, r in rows)]
+            + [len(line.replace("*", "")) + (len(guide_path) if i == 2 else 0) for i, (_, line) in enumerate(guide)])
+        width = min(max(32, textw + 4), w - 4)
+        bh = len(rows) + len(guide) + 7
+        y0 = max(0, (h - bh) // 2)
+        x0 = max(0, (w - width) // 2)
+        for i in range(bh):
+            self.addstr(y0 + i, x0, " " * width, 0)
+        self.box(y0, x0, bh, width, "DEGRADED")
+        self.addstr(
+            y0 + 1, x0 + 2, header[:width - 4],
+            curses.color_pair(C.FG) | curses.A_BOLD)
+        for i, (label, why) in enumerate(rows):
+            self.addstr(
+                y0 + 2 + i, x0 + 4, f"{label[:labelw]:<{labelw}}",
+                curses.color_pair(C.HOT) | curses.A_BOLD)
+            self.addstr(
+                y0 + 2 + i, x0 + 4 + labelw + 2,
+                why[:max(0, width - labelw - 10)],
+                curses.color_pair(C.DIM))
+        gy = y0 + len(rows) + 3
+        self.addstr(
+            gy, x0 + 2, "check:",
+            curses.color_pair(C.FG) | curses.A_BOLD)
+        for i, (kind, line) in enumerate(guide):
+            base = curses.color_pair(C.DIM)
+            self.rich(gy + 1 + i, x0 + 4, line, base, maxw=width - 8)
+            if i == 2:
+                prefix = "*cat* "
+                px = x0 + 4 + len(prefix.replace("*", ""))
+                self.addstr(gy + 1 + i, px, guide_path, curses.color_pair(C.MID) | curses.A_BOLD)
+        self.addstr(
+            y0 + bh - 2, x0 + 2, "Press anywhere or any key to close",
+            curses.color_pair(C.DIM))
 
     def need_msg(self, need_w, need_h):
         h, w = self.s.getmaxyx()
@@ -1536,10 +1857,13 @@ class UI:
         if action is None:
             return
         if QUIRKS.probe and isinstance(action, tuple):
-            if action[0] not in ("help", "url", "refresh", "temp", "plantab"):
+            if action[0] not in (
+                "help", "url", "refresh", "temp", "plantab", "degraded"):
                 self.msg = "!! probe mode: read-only"
                 self.msg_time = time.time()
                 return
+        if self.numedit is not None:
+            return
         if self.editor is not None:
             self.act_editor(action)
             return
@@ -1549,6 +1873,8 @@ class UI:
             kind = action[0]
             if kind == "help":
                 self.open_help()
+            elif kind == "degraded":
+                self.open_degraded()
             elif kind == "plantab":
                 self.plan_tab = action[1]
             elif kind == "url":
@@ -1597,6 +1923,11 @@ class UI:
                     r=action[1], g=action[2], b=action[3])
             elif kind == "colourpicker":
                 self.pick_colour()
+            elif kind == "numedit":
+                if len(action) > 2:
+                    self.open_num(action[1], action[2])
+                else:
+                    self.open_num(action[1])
             elif kind == "bright_abs":
                 _, t0, tw = action
                 val = int(round((self._mx - t0) / max(1, tw - 1) * 100))
@@ -1636,19 +1967,24 @@ class UI:
         self.msg_time = time.time()
 
     def key(self, ch):
+        if self.numedit is not None:
+            self.numedit_key(ch)
+            return
         if self.editor is not None:
             self.editor_key(ch)
             return
         if ch > 0x10FFFF:
             return
         if QUIRKS.probe and ch not in (
-            ord("?"), ord("F"), ord("-"), ord("="), ord("+"),
-            ord("o"), ord("O"), ord("p"), ord("P")):
+            ord("?"), ord("g"), ord("G"), ord("F"), ord("-"), ord("="),
+            ord("+"), ord("o"), ord("O"), ord("p"), ord("P")):
             self.msg = "!! probe mode: read-only"
             self.msg_time = time.time()
             return
         if ch == ord("?"):
             self.open_help()
+        elif ch in (ord("g"), ord("G")):
+            self.open_degraded()
         elif ch == ord("R"):
             self.send({"cmd": "reapply"}, "reapplied saved state")
         elif ch == ord("F"):
@@ -1673,8 +2009,15 @@ class UI:
             cur = 0 if cur is None else cur
             step = 5 if ch in (ord("/"), ord("'")) else -5
             self.set_duty(which, cur + step)
-        elif chr(ch) in PLAN_KEYS:
-            self.set_plan(PLAN_KEYS.index(chr(ch)))
+        elif ch in (ord("n"), ord("m")):
+            which = "cpu" if ch == ord("n") else "gpu"
+            if self.state_fan_mode(which) != "custom":
+                self.msg = "» set the fans to custom first  (D)"
+                self.msg_time = time.time()
+            else:
+                self.open_num("duty", which)
+        elif chr(ch) in PLAN_KEYS or ch == ord("c"):
+            self.set_plan(PLAN_KEYS.index(chr(ch).upper()))
         elif ch in (ord("o"), ord("O")):
             self.plan_tab = "ac"
         elif ch in (ord("p"), ord("P")):
@@ -1703,6 +2046,13 @@ class UI:
                 e = d["effects"][d["mode"]]
                 v = max(1, min(10, e["speed"] + (1 if ch == ord("T") else -1)))
                 self.set_dyn(f"speed → {v}", speed=v)
+        elif ch == ord("y"):
+            if self.kbd_mode() == "dynamic":
+                d = self.dyn()
+                if "speed" in EFFECT_NEEDS[d["mode"]]:
+                    self.open_num("speed")
+        elif ch == ord("u"):
+            self.open_num("bright")
         elif ch == ord("f"):
             if self.kbd_mode() == "dynamic":
                 d = self.dyn()
@@ -1930,6 +2280,10 @@ def runloop(ui):
             if ch != curses.KEY_MOUSE or now - ui.help_t > 0.3:
                 ui.show_help = False
             continue
+        if ui.show_degraded:
+            if ch != curses.KEY_MOUSE or now - ui.degraded_t > 0.3:
+                ui.show_degraded = False
+            continue
         if ch == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
@@ -1943,6 +2297,10 @@ def runloop(ui):
             continue
         if ui.editor is not None:
             ui.editor_key(ch)
+            last = 0.0
+            continue
+        if ui.numedit is not None:
+            ui.numedit_key(ch)
             last = 0.0
             continue
         if ch in (ord("q"), ord("Q"), 27, 17):

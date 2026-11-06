@@ -191,7 +191,7 @@ def section_apge():
         lines.append(f"GUID {APGE_GUID} not present; the APGE path cannot work")
         ok = False
     if not any(BH_GUID in name for name in present):
-        lines.append(f"GUID {BH_GUID} not present; the board is not using WMBH")
+        lines.append(f"GUID {BH_GUID} not present; the machine is not using WMBH")
         ok = False
 
     node = SYS / "apge_raw"

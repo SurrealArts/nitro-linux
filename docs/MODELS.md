@@ -1,12 +1,12 @@
 # Supported models
 
-**As of v2.3.5, verified configurations:**
+**As of v2.3.5, verified models:**
 
-| Model    | Board     | BIOS  | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
-| -------- | --------- | ----- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
-| AN515-57 | Scala_TLS | V1.22 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
-| AN515-45 | Scala_CAS | V1.14 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
-| AN515-58 | Jimny_ADH | V2.21 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
+| Model    | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
+| -------- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
+| AN515-57 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
+| AN515-45 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
+| AN515-58 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
 
 [^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but the control stays disabled until the APGE SET and the visible ON/OFF behaviour are confirmed.
 
@@ -18,13 +18,13 @@
 
 A probe entry is added only after a [Model Support Report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml) is triaged. Probe entries bind only with `probe=1`, expose read attributes only, register a read-only hwmon class (fan tachos and whichever temperatures the firmware reports) but no LED class, platform profile or PWM channels, and reject non-read `wmi_raw` methods. Every write attribute returns `EPERM`.
 
-A maintainer can ask for a same-value write-back run with `probe_writes=1`, which exercises one SET path with the value that board just reported and restores it afterwards. It is how a write path is usually proven before the probe entry is promoted; see `docs/CONTRIBUTING.md`.
+A maintainer can ask for a same-value write-back run with `probe_writes=1`, which exercises one SET path with the value that machine just reported and restores it afterwards. It is how a write path is usually proven before the probe entry is promoted; see `docs/CONTRIBUTING.md`.
 
 No probe candidates at present.
 
 ### Model notes
 
-- **AN515-58** uses OPMS (`GET/SET_MISC` selector `0x0B`) for the platform profile; FTBL reads on that board but does not track the active profile (it read 0 after `acer-wmi` set `performance`). The board reports fan mode 0 at boot while the fans are auto, so its quirk sets `fan_mode_zero_auto`. Static RGB is four zones and dynamic effects work: the `0x15` reply is 0-based (mode first, no status byte), unlike the AN515-57/45 `BHLK` layout, so the driver shifts it into the status-prefixed layout.
+- **AN515-58** uses OPMS (`GET/SET_MISC` selector `0x0B`) for the platform profile; FTBL reads on that model but does not track the active profile (it read 0 after `acer-wmi` set `performance`). The machine reports fan mode 0 at boot while the fans are auto, so its quirk sets `fan_mode_zero_auto`. Static RGB is four zones and dynamic effects work: the `0x15` reply is 0-based (mode first, no status byte), unlike the AN515-57/45 `BHLK` layout, so the driver shifts it into the status-prefixed layout.
 
 Escalating a probe entry (for example enabling `dyn`) requires the previous probe output and a passing `writeback` for each write path being enabled: `ftbl` or `opms` for the platform profile, `kbd_timeout` for the APGE path or the EC 0x06 path (plus the visible 30-second timeout in both states for EC 0x06), `kbd_static` for static RGB, `kbd_dynamic` plus a confirmed visible effect for dynamic RGB, and direct EC evidence for CoolBoost.
 
@@ -39,7 +39,7 @@ cat /sys/devices/platform/nitro/capabilities
 # Example output: probe=0 fan=1 fan_count=2 fan_mode=1 hwmon=1 profile=ftbl rgb=4 dyn=5 coolboost=ec10 led=1 kbd_timeout=1
 ```
 
-Userspace (daemon, TUI, CLI) reads this at startup and **only enables features that are present**. If a capability is missing, the corresponding controls are hidden/disabled.
+Userspace (daemon, TUI, CLI) reads this at startup and **only enables features that are present**. If a capability is missing, the corresponding controls are hidden/disabled. `/sys/devices/platform/nitro/pruned` lists `name=reason` lines for capabilities the load had to drop, or `none`; `nitro status` and the TUI show those reasons next to the unavailable control.
 
 This means:
 
@@ -103,8 +103,8 @@ Also include:
 
 One cooperative owner + recorded evidence. Do not skip or reorder:
 
-1. **Report**: DMI, board, BIOS, kernel, WMI devices, current behavior — the survey block from `tools/probe_survey.py` covers most of it
-2. **Probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. The probe phase collects the baseline reads, and a `probe_writes=1` write-back run can prove a SET path with that board's own value before promotion
+1. **Report**: DMI, kernel, WMI devices, current behavior — the survey block from `tools/probe_survey.py` covers most of it
+2. **Probe** (`probe=1`): no hardware write attrs (`wmi_raw` accepts read methods only), no profile/LED registration, no EC writes. The probe phase collects the baseline reads, and a `probe_writes=1` write-back run can prove a SET path with that machine's own value before promotion
 3. **Sensors**: CPU/GPU temps and fan RPM match independent source
 4. **Fan duty**: one fan at a time; confirm RPM change, no oscillation
 5. **Fan mode**: Auto, Max, Custom accepted by EC

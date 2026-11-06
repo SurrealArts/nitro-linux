@@ -29,12 +29,18 @@ int main(void)
 	expect("cpu above custom", nitro_wb_modes_ok(2, 4, 1), 0);
 	expect("one fan ignores gpu", nitro_wb_modes_ok(1, 3, 0), 1);
 	expect("one fan cpu zero", nitro_wb_modes_ok(1, 0, 0), 0);
+	expect("two fans gpu above custom", nitro_wb_modes_ok(2, 1, 4), 0);
+	expect("one fan ignores gpu mode", nitro_wb_modes_ok(1, 1, 4), 1);
 
 	expect("both auto", nitro_wb_fans_auto(2, 1, 1), 1);
 	expect("gpu custom", nitro_wb_fans_auto(2, 1, 3), 0);
 	expect("cpu max", nitro_wb_fans_auto(2, 2, 1), 0);
 	expect("one fan auto", nitro_wb_fans_auto(1, 1, 0), 1);
 	expect("one fan custom", nitro_wb_fans_auto(1, 3, 0), 0);
+	expect("one fan ignores gpu", nitro_wb_fans_auto(1, 1, 3), 1);
+	expect("both custom", nitro_wb_fans_auto(2, 3, 3), 0);
+	expect("cpu not auto", nitro_wb_fans_auto(2, 0, 1), 0);
+	expect("gpu not auto", nitro_wb_fans_auto(2, 1, 0), 0);
 
 	if (failures) {
 		printf("writeback guard check FAILED: %d assertion(s)\n", failures);
