@@ -8,7 +8,7 @@
 | AN515-45 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
 | AN515-58 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
 
-[^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but the control stays disabled until the APGE SET and the visible ON/OFF behaviour are confirmed.
+[^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but a same-value write-back cannot test the OFF path, and the reporter's runs still read the timeout as ON after toggling the NitroSense timer; the control stays disabled until an OFF transition is observed.
 
 [^2]: Model hardware does not support toggle-able CoolBoost.
 
