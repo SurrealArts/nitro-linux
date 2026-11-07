@@ -10,6 +10,7 @@ q / Q / Esc / Ctrl+Q close the UI
 
 keys
     fans        A Auto, S Max, D Custom     custom:  (. /) cpu -+5, (; ') gpu -+5
+                n/m       focus cpu/gpu custom fan value
                 i CoolBoost (Auto only)
     power       Z X C V B                   power plan
     thermal     F                           switch °C / °F
@@ -19,6 +20,7 @@ keys
                 dynamic: 1-5 effect, t/T speed, f direction
                 brightness (l/L), picker (Enter/#), click swatches
                 k           30-sec backlight timeout on/off
+                y/u       speed/bright (dynamic effect sliders)
 
     refresh     - faster, + slower (100 ms per step)
 """

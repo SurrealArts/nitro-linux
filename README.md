@@ -115,6 +115,7 @@ If you build and sign the kernel module yourself, deploy only the userspace tool
 | Fans      | `A` `S` `D`         | Auto, Max, Custom                                                          |
 | Fans      | `.` `/`             | CPU duty -/+ 5%                                                            |
 | Fans      | `;` `'`             | GPU duty -/+ 5%                                                            |
+| Fans      | `n` `m`             | Focus CPU / GPU custom fan value                                           |
 | CoolBoost | `i`                 | Toggle in Auto; disabled in Max/Custom                                     |
 | Power     | `Z` `X` `C` `V` `B` | Power Saver, Quiet, Balance, Balance Acer, High-Performance                |
 | Power     | `o` `p`             | AC / Battery tab                                                           |
@@ -125,6 +126,7 @@ If you build and sign the kernel module yourself, deploy only the userspace tool
 | Keyboard  | `1`-`5`             | Dynamic effect: breath, neon, wave, shifting, zoom                         |
 | Keyboard  | `t` `T`             | Dynamic speed -/+                                                          |
 | Keyboard  | `f`                 | Dynamic direction (wave, shifting)                                         |
+| Keyboard  | `y` `u`             | Focus speed / brightness on dynamic effect sliders                         |
 | Keyboard  | `#` or `Enter`      | Colour picker (static and colour effects)                                  |
 | Keyboard  | `l` `L`             | Brightness -/+                                                             |
 | Keyboard  | `k`                 | 30-second keyboard backlight timeout on/off                                |
