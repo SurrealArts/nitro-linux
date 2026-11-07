@@ -196,7 +196,7 @@ static const struct nitro_quirks nitro_quirks_an515_45 = {
 	.capabilities = NITRO_CAP_FAN | NITRO_CAP_FAN_MODE | NITRO_CAP_HWMON |
 			NITRO_CAP_PLATFORM_PROFILE | NITRO_CAP_RGB |
 			NITRO_CAP_RGB_DYNAMIC | NITRO_CAP_COOLBOOST |
-			NITRO_CAP_LED_CLASS,
+			NITRO_CAP_LED_CLASS | NITRO_CAP_KBD_TIMEOUT,
 	.rgb_zones = 4,
 	.dynamic_effects = 5,
 	.profile_backend = NITRO_PROFILE_FTBL,
