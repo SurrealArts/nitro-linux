@@ -72,6 +72,12 @@ expect_optional(
     want,
 )
 expect_optional(
+    "README.md version",
+    r"As of v([0-9.]+)",
+    read("README.md"),
+    want,
+)
+expect_optional(
     "bug-report.yml placeholder",
     r'placeholder: "(?:e\.g\., )?([0-9]+\.[0-9]+\.[0-9]+)-1"',
     read(".github/ISSUE_TEMPLATE/bug-report.yml"),

@@ -94,6 +94,7 @@ def main():
         rf'\g<1>{version}-1"',
     )
     replace_optional("docs/MODELS.md", r"As of v[0-9.]+", f"As of v{version}")
+    replace_optional("README.md", r"As of v[0-9.]+", f"As of v{version}")
 
     makepkg = shutil.which("makepkg")
     if makepkg:
