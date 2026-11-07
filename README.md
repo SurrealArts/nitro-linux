@@ -19,12 +19,10 @@ Minimum terminal size: **120x45**
 | Model    | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
 | -------- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
 | AN515-57 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
-| AN515-45 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ❌[^1]           | ✅    |
-| AN515-58 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^2]     | ✅ APGE          | ✅    |
+| AN515-45 | ✅          | ✅        | ✅ FTBL    | ✅ 4 zones | ✅ 5 effects    | ✅ EC 0x10 | ✅ APGE          | ✅    |
+| AN515-58 | ✅          | ✅ 0=auto | ✅ OPMS    | ✅ 4 zones | ✅ 5 effects    | ❌[^1]     | ✅ APGE          | ✅    |
 
-[^1]: APGE GET replies now parse (the reply also carries the keyboard brightness), but the control stays disabled until the APGE SET and the visible ON/OFF behaviour are confirmed.
-
-[^2]: Model hardware does not support toggle-able CoolBoost.
+[^1]: Model hardware does not support toggle-able CoolBoost.
 
 See [docs/MODELS.md](docs/MODELS.md) for the full details.
 
