@@ -1,6 +1,6 @@
 # Supported models
 
-**As of v2.3.5, verified models:**
+**As of v2.4.0, verified models:**
 
 | Model    | Fan control | Fan mode  | Power plan | RGB        | Dynamic effects | CoolBoost  | Keyboard timeout | hwmon |
 | -------- | ----------- | --------- | ---------- | ---------- | --------------- | ---------- | ---------------- | ----- |
