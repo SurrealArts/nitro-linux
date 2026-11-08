@@ -306,23 +306,24 @@ def migrate_legacy(values, explicit, remove):
     if not has_probe:
         return values, explicit, False
 
-    if "probe" in explicit and values.get("probe") is False:
+    values = dict(values)
+    policy_off = "probe" in explicit and values.get("probe") is False
+    if policy_off:
+        values["probe"] = False
         print(
             f"warning: {path} requests probe mode but the policy sets "
-            "probe=off; leaving it in place",
+            "probe=off; the policy wins",
             file=sys.stderr,
         )
-        return values, explicit, False
-
-    values = dict(values)
-    values["probe"] = True
-    explicit = set(explicit) | {"probe"}
+    else:
+        values["probe"] = True
+        explicit = set(explicit) | {"probe"}
     if remove:
         try:
             path.unlink()
         except OSError as exc:
             print(f"warning: cannot remove {path}: {exc}", file=sys.stderr)
-    return values, explicit, True
+    return values, explicit, not policy_off
 
 
 def sync(quiet=False, values=None):

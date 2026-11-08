@@ -39,7 +39,8 @@ If your model is listed there, load the module in read-only mode. The source ins
 sudo bash deploy/install.sh --probe
 ```
 
-It writes `options nitro probe=1` to `/etc/modprobe.d/nitro-linux.conf`, so
+It saves `probe=on` to `/etc/nitro/controls.conf` and writes
+`options nitro probe=1` to `/etc/modprobe.d/nitro-controls.conf`, so
 `modprobe`, `systemd-modules-load` and every later boot use probe mode. For a
 one-off load of an already installed module instead:
 
@@ -91,8 +92,9 @@ sudo modprobe -r nitro
 sudo modprobe nitro probe=1 probe_writes=1
 ```
 
-If `deploy/install.sh --probe` already wrote `options nitro probe=1` to
-`/etc/modprobe.d/`, `modprobe` merges that with the command line, so adding
+If `deploy/install.sh --probe` already saved `probe=on` in
+`/etc/nitro/controls.conf`, the generated `/etc/modprobe.d/nitro-controls.conf`
+contains `probe=1`; `modprobe` merges that with the command line, so adding
 `probe_writes=1` is enough.
 
 The node only exists with that flag (root-only, `0600`). Write a path name, then

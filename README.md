@@ -161,7 +161,7 @@ Manage it with:
 3. `--with`/`--without` change only the keys they name; `--no-save` writes the drop-in without saving the policy, and the next install, upgrade, or sync restores it.
 4. Installers regenerate `/etc/modprobe.d/nitro-controls.conf` from the policy. Do not edit that file.
 
-Source reinstall and `pacman -Syu` create the policy only when it is missing and otherwise leave it untouched. This is what makes a setting such as `profile=off` stick across upgrades. Uninstalling keeps `/etc/nitro/controls.conf` (like `/etc/nitro.conf`), removes the generated drop-in, and a later reinstall restores your choices. The old auto-generated `/etc/modprobe.d/nitro-linux.conf` from `--probe` is imported into the policy and removed. If another file in `/etc/modprobe.d` sets `options nitro`, nitro reports it but never rewrites it; remove that file once its settings are in the policy.
+Source reinstall and `pacman -Syu` create the policy only when it is missing and otherwise leave it untouched. This is what makes a setting such as `profile=off` stick across upgrades. Uninstalling keeps `/etc/nitro/controls.conf` (like `/etc/nitro.conf`), removes the generated drop-in, and a later reinstall restores your choices. The old auto-generated `/etc/modprobe.d/nitro-linux.conf` from `--probe` is imported into the policy and removed; if the policy explicitly sets `probe=off`, the policy wins and the old file is removed. If another file in `/etc/modprobe.d` sets `options nitro`, nitro reports it but never rewrites it; remove that file once its settings are in the policy.
 
 ### Examples
 

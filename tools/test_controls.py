@@ -221,6 +221,19 @@ class ControlsTest(unittest.TestCase):
         self.assertFalse(legacy.exists())
         self.assertIn("probe=1", self.options())
 
+    def test_legacy_probe_does_not_override_policy(self):
+        self.write_conf("schema=1\nprobe=off\n")
+        legacy = self.modprobe / "nitro-linux.conf"
+        legacy.write_text(
+            "# nitro-linux: read-only probe mode, added by "
+            "deploy/install.sh --probe\noptions nitro probe=1\n"
+        )
+        result = self.run_cli("install", "--quiet")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("probe=off", self.read_conf())
+        self.assertFalse(legacy.exists())
+        self.assertNotIn("probe=1", self.options())
+
     def test_foreign_options_warn(self):
         foreign = self.modprobe / "nitro-no-profile.conf"
         foreign.write_text("options nitro disable_profile=1\n")
