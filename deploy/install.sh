@@ -5,15 +5,25 @@ cd "$(dirname "$0")/.."
 MANUAL_MODULE=0
 PROBE_MODE=0
 MOK_CERT_OVERRIDE=""
+WITH_CONTROLS=()
+WITHOUT_CONTROLS=()
+NO_SAVE=0
 
 usage() {
   cat <<'EOF'
-usage: sudo bash deploy/install.sh [--manual-module] [--probe] [--mok-cert PATH]
+usage: sudo bash deploy/install.sh [--manual-module] [--probe]
+       [--with LIST] [--without LIST] [--no-save] [--mok-cert PATH]
 
   --manual-module   skip DKMS; install the userspace tools and services only.
                     Use this when you built and signed the kernel module yourself.
-  --probe           load the module read-only for a probe-listed model. Writes
-                    'options nitro probe=1' to /etc/modprobe.d/nitro-linux.conf.
+  --probe           shorthand for --with=probe, for a probe-listed model.
+                    Saved to /etc/nitro/controls.conf like any other control.
+  --with LIST       enable controls, comma separated: probe, profile, fan,
+                    hwmon, rgb, coolboost, kbd_timeout.
+  --without LIST    disable controls, comma separated. Saved to
+                    /etc/nitro/controls.conf unless --no-save is used.
+  --no-save         write the generated module options without saving the
+                    policy; a later install or sync restores it.
   --mok-cert PATH   certificate Secure Boot should have enrolled, when it is not
                     the one DKMS is configured with.
   -h, --help        show this help
@@ -24,6 +34,25 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --manual-module) MANUAL_MODULE=1 ;;
     --probe) PROBE_MODE=1 ;;
+    --with)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "[!] --with needs a comma-separated list" >&2
+        exit 2
+      fi
+      WITH_CONTROLS+=("$1")
+      ;;
+    --with=*) WITH_CONTROLS+=("${1#*=}") ;;
+    --without)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "[!] --without needs a comma-separated list" >&2
+        exit 2
+      fi
+      WITHOUT_CONTROLS+=("$1")
+      ;;
+    --without=*) WITHOUT_CONTROLS+=("${1#*=}") ;;
+    --no-save) NO_SAVE=1 ;;
     --mok-cert)
       shift
       if [ $# -eq 0 ]; then
@@ -37,6 +66,24 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+CONTROLS_ARGS=()
+if [ ${#WITH_CONTROLS[@]} -gt 0 ]; then
+  for item in "${WITH_CONTROLS[@]}"; do
+    CONTROLS_ARGS+=("--with=$item")
+  done
+fi
+if [ ${#WITHOUT_CONTROLS[@]} -gt 0 ]; then
+  for item in "${WITHOUT_CONTROLS[@]}"; do
+    CONTROLS_ARGS+=("--without=$item")
+  done
+fi
+if [ "$NO_SAVE" -eq 1 ]; then
+  CONTROLS_ARGS+=("--no-save")
+fi
+if [ "$PROBE_MODE" -eq 1 ]; then
+  CONTROLS_ARGS+=("--with=probe")
+fi
 
 if pacman -Qq nitro-linux >/dev/null 2>&1; then
   echo "[!] nitro-linux is installed as a package."
@@ -112,6 +159,14 @@ run_as_user() {
     sudo -u "$u" -- "$@"
   else
     return 1
+  fi
+}
+
+install_controls() {
+  if [ -x /usr/local/bin/nitro ]; then
+    /usr/local/bin/nitro controls install --quiet "$@"
+  else
+    return 0
   fi
 }
 
@@ -345,6 +400,7 @@ install -m755 daemon/nitrod.py /usr/local/bin/nitrod
 install -m755 tui/nitro-linux.py /usr/local/bin/nitro-linux
 install -m755 tools/nitro.py /usr/local/bin/nitro
 install -Dm644 tools/model.py /usr/local/lib/nitro/model.py
+install -Dm644 tools/controls.py /usr/local/lib/nitro/controls.py
 install -Dm644 deploy/nitro-key.service /usr/local/lib/systemd/user/nitro-key.service
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then
@@ -355,16 +411,12 @@ if [ -f "$VFILE" ]; then
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
-if [ "$PROBE_MODE" -eq 1 ]; then
-  install -d -m755 /etc/modprobe.d
-  printf '# nitro-linux: read-only probe mode, added by deploy/install.sh --probe\noptions nitro probe=1\n' \
-    > /etc/modprobe.d/nitro-linux.conf
-  chmod 644 /etc/modprobe.d/nitro-linux.conf
-  echo "[*] probe mode: options nitro probe=1 in /etc/modprobe.d/nitro-linux.conf"
-elif [ -f /etc/modprobe.d/nitro-linux.conf ] &&
-     grep -qs 'deploy/install.sh --probe' /etc/modprobe.d/nitro-linux.conf; then
-  rm -f /etc/modprobe.d/nitro-linux.conf
-  echo "[*] probe mode: drop-in removed"
+if ! install_controls "${CONTROLS_ARGS[@]}"; then
+  echo "[!] controls sync failed; previous module options kept" >&2
+elif [ "$NO_SAVE" -eq 1 ]; then
+  echo "[*] controls: overrides applied without saving the policy (--no-save)"
+else
+  echo "[*] controls: saved to /etc/nitro/controls.conf"
 fi
 tighten_state
 add_user_nitro
