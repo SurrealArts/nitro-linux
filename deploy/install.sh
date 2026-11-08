@@ -5,15 +5,100 @@ cd "$(dirname "$0")/.."
 MANUAL_MODULE=0
 PROBE_MODE=0
 MOK_CERT_OVERRIDE=""
+WITH_CONTROLS=()
+WITHOUT_CONTROLS=()
+NO_SAVE=0
+
+# Controls the policy can name, in help and error order.
+CONTROL_KEYS=(probe profile fan hwmon rgb coolboost kbd_timeout)
+
+control_names() {
+  local IFS=,
+  printf '%s\n' "${CONTROL_KEYS[*]}"
+}
+
+valid_control() {
+  local name
+  for name in "${CONTROL_KEYS[@]}"; do
+    [ "$name" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Validate one --with/--without argument. Runs before anything is copied,
+# built, or installed, so a typo cannot cost a DKMS rebuild. Prints the
+# normalized names, one per line; diagnostics go to stderr.
+control_list() {
+  local flag="$1" raw="$2" rest item name
+  local names=()
+  case "$raw" in
+    *[![:space:]]*) ;;
+    *)
+      echo "[!] $flag needs at least one control name" >&2
+      echo "    valid controls: $(control_names)" >&2
+      return 1
+      ;;
+  esac
+  # Split on commas by hand: "read -a" silently drops a trailing empty field.
+  rest="$raw"
+  while :; do
+    item="${rest%%,*}"
+    name="${item//[[:space:]]/}"
+    if [ -z "$name" ]; then
+      echo "[!] $flag has an empty entry: '$raw'" >&2
+      echo "    use a comma-separated list, e.g. --with=fan,profile" >&2
+      return 1
+    fi
+    if ! valid_control "$name"; then
+      echo "[!] unknown control '$name' in $flag" >&2
+      if [ "$name" != "$item" ]; then
+        echo "    separate names with commas, e.g. --with=fan,profile" >&2
+      fi
+      echo "    valid controls: $(control_names)" >&2
+      return 1
+    fi
+    names+=("$name")
+    case "$rest" in
+      *,*) rest="${rest#*,}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s\n' "${names[@]}"
+}
+
+add_controls() {
+  # $1 = --with or --without, $2 = raw comma-separated list
+  local flag="$1" raw="$2" list parts=()
+  if ! list="$(control_list "$flag" "$raw")"; then
+    return 1
+  fi
+  # One name per line: "read" would keep only the first line of the list.
+  mapfile -t parts <<< "$list"
+  if [ "$flag" = "--with" ]; then
+    WITH_CONTROLS+=("${parts[@]}")
+  else
+    WITHOUT_CONTROLS+=("${parts[@]}")
+  fi
+}
 
 usage() {
   cat <<'EOF'
-usage: sudo bash deploy/install.sh [--manual-module] [--probe] [--mok-cert PATH]
+usage: sudo bash deploy/install.sh [--manual-module] [--probe]
+       [--with LIST] [--without LIST] [--no-save] [--mok-cert PATH]
 
   --manual-module   skip DKMS; install the userspace tools and services only.
                     Use this when you built and signed the kernel module yourself.
-  --probe           load the module read-only for a probe-listed model. Writes
-                    'options nitro probe=1' to /etc/modprobe.d/nitro-linux.conf.
+  --probe           shorthand for --with=probe, for a probe-listed model.
+                    Saved to /etc/nitro/controls.conf like any other control.
+  --with LIST       enable controls, comma separated: probe, profile, fan,
+                    hwmon, rgb, coolboost, kbd_timeout.
+  --without LIST    disable controls, comma separated. Saved to
+                    /etc/nitro/controls.conf unless --no-save is used.
+  --with=LIST       same as --with LIST (and --without=LIST likewise). Names
+                    are checked before anything is installed, so a typo fails
+                    immediately.
+  --no-save         write the generated module options without saving the
+                    policy; a later install or sync restores it.
   --mok-cert PATH   certificate Secure Boot should have enrolled, when it is not
                     the one DKMS is configured with.
   -h, --help        show this help
@@ -24,6 +109,20 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --manual-module) MANUAL_MODULE=1 ;;
     --probe) PROBE_MODE=1 ;;
+    --with|--without)
+      OPTION="$1"
+      shift
+      if [ $# -eq 0 ] || [ "${1#-}" != "$1" ]; then
+        echo "[!] $OPTION needs a comma-separated list" >&2
+        echo "    valid controls: $(control_names)" >&2
+        exit 2
+      fi
+      add_controls "$OPTION" "$1" || exit 2
+      ;;
+    --with=*|--without=*)
+      add_controls "${1%%=*}" "${1#*=}" || exit 2
+      ;;
+    --no-save) NO_SAVE=1 ;;
     --mok-cert)
       shift
       if [ $# -eq 0 ]; then
@@ -38,9 +137,51 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+if [ "$PROBE_MODE" -eq 1 ]; then
+  WITH_CONTROLS+=(probe)
+fi
+
+# Contradictions are a usage error, not something to discover after a rebuild.
+for enabled in "${WITH_CONTROLS[@]}"; do
+  for disabled in "${WITHOUT_CONTROLS[@]}"; do
+    if [ "$enabled" = "$disabled" ]; then
+      echo "[!] '$enabled' is named in both --with and --without" >&2
+      exit 2
+    fi
+  done
+done
+case " ${WITH_CONTROLS[*]} " in
+  *" coolboost "*)
+    case " ${WITHOUT_CONTROLS[*]} " in
+      *" fan "*)
+        echo "[!] --without=fan also disables CoolBoost; drop --with=coolboost" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+esac
+
+CONTROLS_ARGS=()
+for item in "${WITH_CONTROLS[@]}"; do
+  CONTROLS_ARGS+=("--with=$item")
+done
+for item in "${WITHOUT_CONTROLS[@]}"; do
+  CONTROLS_ARGS+=("--without=$item")
+done
+if [ "$NO_SAVE" -eq 1 ]; then
+  CONTROLS_ARGS+=("--no-save")
+fi
+
 if pacman -Qq nitro-linux >/dev/null 2>&1; then
   echo "[!] nitro-linux is installed as a package."
   echo "    Use pacman to upgrade, or remove the package before a source install."
+  exit 1
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "[!] this installer writes to /usr, /etc, DKMS, and the module tree." >&2
+  echo "    run it with sudo:" >&2
+  echo "    sudo bash deploy/install.sh $*" >&2
   exit 1
 fi
 
@@ -112,6 +253,14 @@ run_as_user() {
     sudo -u "$u" -- "$@"
   else
     return 1
+  fi
+}
+
+install_controls() {
+  if [ -x /usr/local/bin/nitro ]; then
+    /usr/local/bin/nitro controls install --quiet "$@"
+  else
+    return 0
   fi
 }
 
@@ -345,6 +494,7 @@ install -m755 daemon/nitrod.py /usr/local/bin/nitrod
 install -m755 tui/nitro-linux.py /usr/local/bin/nitro-linux
 install -m755 tools/nitro.py /usr/local/bin/nitro
 install -Dm644 tools/model.py /usr/local/lib/nitro/model.py
+install -Dm644 tools/controls.py /usr/local/lib/nitro/controls.py
 install -Dm644 deploy/nitro-key.service /usr/local/lib/systemd/user/nitro-key.service
 VFILE="VERSION"; [ -f "$VFILE" ] || VFILE="$(dirname "$0")/../VERSION"
 if [ -f "$VFILE" ]; then
@@ -355,16 +505,12 @@ if [ -f "$VFILE" ]; then
 fi
 install -m644 deploy/nitrod.service /etc/systemd/system/nitrod.service
 [ -f /etc/nitro.conf ] || install -m644 deploy/nitro.conf /etc/nitro.conf
-if [ "$PROBE_MODE" -eq 1 ]; then
-  install -d -m755 /etc/modprobe.d
-  printf '# nitro-linux: read-only probe mode, added by deploy/install.sh --probe\noptions nitro probe=1\n' \
-    > /etc/modprobe.d/nitro-linux.conf
-  chmod 644 /etc/modprobe.d/nitro-linux.conf
-  echo "[*] probe mode: options nitro probe=1 in /etc/modprobe.d/nitro-linux.conf"
-elif [ -f /etc/modprobe.d/nitro-linux.conf ] &&
-     grep -qs 'deploy/install.sh --probe' /etc/modprobe.d/nitro-linux.conf; then
-  rm -f /etc/modprobe.d/nitro-linux.conf
-  echo "[*] probe mode: drop-in removed"
+if ! install_controls "${CONTROLS_ARGS[@]}"; then
+  echo "[!] controls sync failed; previous module options kept" >&2
+elif [ "$NO_SAVE" -eq 1 ]; then
+  echo "[*] controls: overrides applied without saving the policy (--no-save)"
+else
+  echo "[*] controls: saved to /etc/nitro/controls.conf"
 fi
 tighten_state
 add_user_nitro

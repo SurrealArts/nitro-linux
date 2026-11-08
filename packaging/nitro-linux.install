@@ -5,6 +5,14 @@ _install_config() {
   fi
 }
 
+_install_controls() {
+  if [ -x /usr/bin/nitro ]; then
+    /usr/bin/nitro controls install --quiet "$@"
+  else
+    return 0
+  fi
+}
+
 _check_source_install() {
   if [ -e /usr/local/bin/nitrod ] ||
      [ -e /usr/local/bin/nitro-linux ] ||
@@ -125,6 +133,8 @@ _disable_key() {
 
 post_install() {
   _install_config
+  _install_controls --boot-notice || echo ":: WARNING: controls sync failed; previous module options kept"
+  echo ":: Control policy: /etc/nitro/controls.conf (see 'nitro controls show')."
   _check_source_install
   _tighten_state
   _add_user_nitro
@@ -139,6 +149,7 @@ post_install() {
 
 post_upgrade() {
   _install_config
+  _install_controls --boot-notice || echo ":: WARNING: controls sync failed; previous module options kept"
   _tighten_state
   _add_user_nitro
   if [ -d /run/systemd/system ]; then
@@ -153,6 +164,7 @@ post_upgrade() {
 
 pre_remove() {
   _disable_key
+  rm -f /etc/modprobe.d/nitro-controls.conf /etc/modprobe.d/nitro-linux.conf
   if [ -d /run/systemd/system ]; then
     systemctl disable --now nitrod.service nitro-apply.service 2>/dev/null || true
   fi
@@ -162,5 +174,5 @@ post_remove() {
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
   fi
-  echo ":: /etc/nitro.conf, /var/lib/nitro, and the user Nitro key config were kept."
+  echo ":: /etc/nitro.conf, /etc/nitro/controls.conf, /var/lib/nitro, and the user Nitro key config were kept."
 }

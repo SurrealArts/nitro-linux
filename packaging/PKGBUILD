@@ -24,6 +24,7 @@ package() {
   install -Dm755 "$src/tui/nitro-linux.py" "$pkgdir/usr/bin/nitro-linux"
   install -Dm755 "$src/daemon/nitrod.py" "$pkgdir/usr/bin/nitrod"
   install -Dm644 "$src/tools/model.py" "$pkgdir/usr/lib/nitro/model.py"
+  install -Dm644 "$src/tools/controls.py" "$pkgdir/usr/lib/nitro/controls.py"
   install -Dm644 "$src/VERSION" "$pkgdir/usr/lib/nitro/VERSION"
   install -Dm755 "$src/deploy/nitro-apply" "$pkgdir/usr/bin/nitro-apply"
 

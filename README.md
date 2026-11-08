@@ -88,7 +88,7 @@ Install the headers for your running kernel (`linux-headers` or `linux-lts-heade
 sudo pacman -Syu nitro-linux
 ```
 
-Reboot once. `/etc/nitro.conf` is created only if absent. Updates are normal `pacman -Syu`.
+Reboot once. `/etc/nitro.conf` and `/etc/nitro/controls.conf` are created only if absent. Updates are normal `pacman -Syu`.
 
 ```bash
 sudo pacman -Rns nitro-linux
@@ -101,9 +101,96 @@ sudo bash deploy/install.sh
 sudo bash deploy/uninstall.sh
 ```
 
-If your model only has a **probe** entry, the driver refuses to load without `probe=1`. Install with `sudo bash deploy/install.sh --probe`, which writes `options nitro probe=1` to `/etc/modprobe.d/nitro-linux.conf` so the module also loads read-only at boot.
+If your model only has a **probe** entry, the driver refuses to load without `probe=1`. Install with `sudo bash deploy/install.sh --probe` (shorthand for `--with=probe`), which saves `probe=on` to `/etc/nitro/controls.conf` and generates `/etc/modprobe.d/nitro-controls.conf`, so the module also loads read-only at boot. Package upgrades honor the same policy.
 
 If you build and sign the kernel module yourself, deploy only the userspace tools and services with `sudo bash deploy/install.sh --manual-module`. The module must already be built, signed, and installed for the running kernel so `modprobe nitro` finds it; the script then skips DKMS, the DKMS Secure Boot preflight, and the initramfs rebuild but still installs `nitro`, `nitrod`, `nitro-linux`, `/etc/nitro.conf`, and the systemd units. Before changing the userspace tree it checks the installed module's version against this checkout and aborts on a mismatch; after loading it checks `/sys/module/nitro/version` again. Your signature is your responsibility in this mode. **Only do this when you know what you are doing!**
+
+### Installation options
+
+`deploy/install.sh` accepts these options in addition to the usual `--manual-module` and `--mok-cert PATH`:
+
+| Option           | Effect                                                                                                                                        |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--with LIST`    | Enable controls, comma separated: `probe`, `profile`, `fan`, `hwmon`, `rgb`, `coolboost`, `kbd_timeout`. Saved to `/etc/nitro/controls.conf`. |
+| `--without LIST` | Disable controls. Saved to `/etc/nitro/controls.conf`; `--without=fan` also disables CoolBoost.                                               |
+| `--no-save`      | Write the generated drop-in without changing the policy; the next install, upgrade, or `nitro controls sync` restores the policy.             |
+| `--probe`        | Shorthand for `--with=probe`; persisted like any other control.                                                                               |
+
+`LIST` is comma separated: `--with=fan,profile`, `--with fan,profile`, and `--with "fan, profile"` all mean the same thing, and one name is a one-item list. Unknown names, empty entries, and contradictions (`--with=fan --without=fan`, or `--with=coolboost --without=fan`) are rejected before the source is copied or the module is rebuilt.
+
+Pacman installs take no flags: they create `/etc/nitro/controls.conf` with every control enabled and `probe=off`, and you change it afterwards with `sudo nitro controls set`. A source reinstall changes only the keys named on its command line; package upgrades never rewrite an existing policy.
+
+## Control policy
+
+Every kernel-module control can be disabled independently. This is a load-time decision: the driver does not register that sysfs, LED, hwmon, or platform-profile interface at all, so a different controller can own that subsystem without nitro competing for it.
+
+The post-install policy lives in `/etc/nitro/controls.conf`:
+
+```ini
+schema=1
+probe=off
+# Power plans are handled by the desktop, PPD, or auto-cpufreq.
+profile=off
+fan=on
+hwmon=on
+rgb=on
+coolboost=on
+kbd_timeout=on
+```
+
+- Keys are `probe`, `profile`, `fan`, `hwmon`, `rgb`, `coolboost`, and `kbd_timeout`; values are `on` or `off`.
+- Missing keys use the defaults: `probe=off`, everything else `on`.
+- Comments must be on their own line. Unknown keys, duplicate keys, bad values, and unsupported `schema` values are errors.
+- `fan=off` also disables CoolBoost and fan-mode control. An explicit `coolboost=on` together with `fan=off` is rejected.
+- `probe=on` keeps the existing read-only probe mode for unverified models.
+
+Manage it with:
+
+| Command                                   | Purpose                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `nitro controls show`                     | Show the policy, generated module options, live capabilities, and whether a reload is pending.             |
+| `nitro controls check`                    | Exit 0 when policy, drop-in, and loaded module agree; 1 when out of sync; 2 when the module is not loaded. |
+| `sudo nitro controls set <key> <on\|off>` | Validate and update one key, preserving comments, then regenerate the drop-in.                             |
+| `sudo nitro controls sync`                | Regenerate `/etc/modprobe.d/nitro-controls.conf` from the policy without reloading.                        |
+| `sudo nitro controls apply`               | Sync, reload the module, and restart `nitrod` if it was running.                                           |
+
+`set` and `sync` change the boot configuration; the running module keeps its current options until `apply` or reboot. On a module reload, the old instance restores the platform profile it captured at load, so re-apply the profile from your desktop or `nitro profile` afterwards if needed.
+
+### Precedence and lifecycle
+
+1. Built-in defaults apply when no policy exists.
+2. `/etc/nitro/controls.conf` overrides the defaults on every boot and install.
+3. `--with`/`--without` change only the keys they name; `--no-save` writes the drop-in without saving the policy, and the next install, upgrade, or sync restores it.
+4. Installers regenerate `/etc/modprobe.d/nitro-controls.conf` from the policy. Do not edit that file.
+
+Source reinstall and `pacman -Syu` create the policy only when it is missing and otherwise leave it untouched. This is what makes a setting such as `profile=off` stick across upgrades. Uninstalling keeps `/etc/nitro/controls.conf` (like `/etc/nitro.conf`), removes the generated drop-in, and a later reinstall restores your choices. The old auto-generated `/etc/modprobe.d/nitro-linux.conf` from `--probe` is imported into the policy and removed; if the policy explicitly sets `probe=off`, the policy wins and the old file is removed. If another file in `/etc/modprobe.d` sets `options nitro`, nitro reports it but never rewrites it; remove that file once its settings are in the policy.
+
+### Examples
+
+Power plans owned by the desktop, with fans, lighting, sensors, and the keyboard timeout still managed by nitro:
+
+```bash
+sudo nitro controls set profile off
+sudo nitro controls apply
+```
+
+Monitoring only (fan control, hwmon, power plans, and lighting interfaces removed):
+
+```bash
+sudo nitro controls set fan off
+sudo nitro controls set hwmon off
+sudo nitro controls set profile off
+sudo nitro controls set rgb off
+sudo nitro controls apply
+```
+
+The equivalent source-install form, which persists the choice in `/etc/nitro/controls.conf`:
+
+```bash
+sudo bash deploy/install.sh --without=profile
+```
+
+On models where nitro is the only `platform_profile` provider, disabling `profile` removes that interface entirely. Where `acer-wmi` also registers it, the desktop keeps working.
 
 ## Use
 
@@ -147,6 +234,8 @@ If you build and sign the kernel module yourself, deploy only the userspace tool
 | `sudo nitro kbd-timeout [on-or-off]`                                 | Show or set the 30-second keyboard backlight timeout                    |
 | `sudo nitro dyn <mode> <speed> <brightness> <direction> <r> <g> <b>` | Set dynamic lighting                                                    |
 | `sudo nitro profile <profile>`                                       | Set the platform profile                                                |
+| `nitro controls show\|check`                                         | Show or verify the persistent control policy                            |
+| `sudo nitro controls set\|sync\|apply`                               | Change the policy and reload the module                                 |
 | `nitro key <command>`                                                | Bind or manage the NitroSense key                                       |
 
 Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Speed is `0`-`255`, brightness is `0`-`100`, and direction is `1` or `2`. Profiles are `low-power`, `quiet`, `balanced`, `balanced-performance`, and `performance`. Writes go to root-owned sysfs, hence `sudo`.
@@ -178,6 +267,8 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 <summary>Configuration and state</summary>
 
 - `/etc/nitro.conf`: boot defaults for static/dynamic lighting, fan duty, CoolBoost, keyboard timeout, and platform profile; created only if absent and kept on uninstall; read by `nitro-apply` (`sudo systemctl restart nitro-apply` after edits); optional `coolboost on|off` applies only while all fans report auto.
+- `/etc/nitro/controls.conf`: persistent control policy for which kernel-module interfaces are registered; created on first install if absent, never rewritten by upgrades, edited with `sudo nitro controls set`, and kept on uninstall.
+- `/etc/modprobe.d/nitro-controls.conf`: module options generated from `/etc/nitro/controls.conf` by the installer or `nitro controls sync`; regenerated on install and upgrade, removed on uninstall, and never edited by hand.
 - `/etc/modules-load.d/nitro.conf`: loads the `nitro` kernel module at boot; removed on uninstall.
 - `/var/lib/nitro/state.json`: daemon state for lighting, fan modes/duty, CoolBoost, the keyboard timeout, and the `profile_ac`/`profile_battery` keys; kept on uninstall. Missing lighting zones are backfilled during load, so a partial or older state file does not leave the keyboard dark. An older state file with no keyboard-timeout key leaves the firmware value unchanged until you toggle it.
 - `/var/lib/nitro/history.db`: 24-hour fan, temperature, and duty history written by `nitrod`; kept on uninstall.

@@ -17,6 +17,7 @@ shared = (
     "add_user_nitro",
     "run_as_user",
     "auto_key",
+    "install_controls",
 )
 
 

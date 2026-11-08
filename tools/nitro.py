@@ -37,6 +37,7 @@ from model import (
     CAP_COOLBOOST,
     CAP_KBD_TIMEOUT,
 )
+from controls import main as controls_main
 
 BASE = pathlib.Path("/sys/devices/platform/nitro")
 SOCK = os.environ.get("NITRO_SOCK", "/run/nitro.sock")
@@ -1461,6 +1462,7 @@ def usage():
     print("               | kbd-timeout [on|off]        (30-sec keyboard backlight timer)")
     print("               | dyn <mode 1-5> <speed> <brightness 0-100> <dir 1-2> <r> <g> <b>")
     print("               | profile <low-power|quiet|balanced|balanced-performance|performance>")
+    print("               | controls [show|check|set|sync|install|apply]")
     print("               | key [status|auto|find|bind|unbind|listen]")
     print("               | report")
     print("modes:")
@@ -1515,6 +1517,8 @@ if __name__ == "__main__":
             raise SystemExit("platform profile not found")
         profile_path.write_text(sys.argv[2])
         print(f"platform_profile: {profile_path.read_text().strip()}")
+    elif sys.argv[1] == "controls":
+        sys.exit(controls_main(sys.argv[2:]))
     elif sys.argv[1] == "key":
         if len(sys.argv) < 3 or sys.argv[2] in ("status",):
             key_status()

@@ -80,12 +80,12 @@ rm -f /usr/local/bin/nitro-apply /usr/local/bin/nitrod /usr/local/bin/nitro-linu
 rm -rf /usr/local/lib/nitro
 rm -f /usr/local/lib/systemd/user/nitro-key.service
 rm -f /etc/modules-load.d/nitro.conf
-rm -f /etc/modprobe.d/nitro-linux.conf
+rm -f /etc/modprobe.d/nitro-linux.conf /etc/modprobe.d/nitro-controls.conf
 # Leftovers from older source installs and from package-style layouts.
 rm -f /usr/lib/sysusers.d/nitro-linux.conf /usr/local/lib/sysusers.d/nitro-linux.conf
 rm -f /usr/lib/tmpfiles.d/nitro-linux.conf /usr/local/lib/tmpfiles.d/nitro-linux.conf
 systemctl daemon-reload
-echo "[*] dkms remove all nitro versions (keeps /etc/nitro.conf, /var/lib/nitro, and ~/.config/nitro)"
+echo "[*] dkms remove all nitro versions (keeps /etc/nitro.conf, /etc/nitro/controls.conf, /var/lib/nitro, and ~/.config/nitro)"
 for v in $(dkms status 2>/dev/null | sed -n 's#^nitro/\([^,]*\),.*#\1#p' | sort -u); do
   echo "[*] dkms remove nitro/$v"
   dkms remove -m nitro -v "$v" --all 2>/dev/null || true

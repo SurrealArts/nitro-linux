@@ -30,6 +30,7 @@ test:
 	$(CC) -std=c99 -Wall -Wextra -o /tmp/nitro-writeback-guards \
 		tools/test_writeback_guards.c
 	/tmp/nitro-writeback-guards
+	python3 tools/test_controls.py
 
 bump:
 	@if [ -z "$(VERSION)" ]; then echo "usage: make bump VERSION=x.y.z"; exit 1; fi
