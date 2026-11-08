@@ -6,20 +6,21 @@ If you want your Nitro/Predator supported, the most valuable thing you can do is
 
 ---
 
-## Quick report (copy-paste this)
+## Quick report
+
+Run `nitro report` and open a **Model support report** issue with the full output. It is read-only and redacts UUIDs and MAC addresses; model names and the WMI GUID list stay readable, so review it before posting. If `nitro-linux` is not installed, paste this instead:
 
 ```bash
 {
   echo "[uname]"; uname -r
   echo "[DMI]"
-  cat /sys/class/dmi/id/{sys_vendor,product_name,board_name,board_vendor,bios_version,bios_date}
+  cat /sys/class/dmi/id/{sys_vendor,product_name,bios_version,bios_date}
   echo "[WMI]"; ls /sys/bus/wmi/devices/
-  echo "[nitro]"; ls /sys/devices/platform/nitro/ 2>/dev/null || true
   echo "[modules]"; lsmod | grep -E 'nitro|acer_wmi' || true
 } 2>/dev/null
 ```
 
-Open a **Model support report** issue and paste the output. Also include:
+Also include:
 
 - Distro and kernel (`uname -r`)
 - Whether you installed `nitro-linux` (package / source / not installed)

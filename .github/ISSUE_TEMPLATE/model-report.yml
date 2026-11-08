@@ -8,15 +8,14 @@ body:
       value: |
         ## Required Information
 
-        Please provide accurate DMI and system information. You can generate this using `nitro report` or the command below:
+        Run `nitro report` and paste the full output below. It is read-only and redacts UUIDs and MAC addresses. If `nitro-linux` is not installed, paste this instead:
 
         ```bash
         {
           echo "[uname]"; uname -r
           echo "[DMI]"
-          cat /sys/class/dmi/id/{sys_vendor,product_name,board_name,board_vendor,bios_version,bios_date}
+          cat /sys/class/dmi/id/{sys_vendor,product_name,bios_version,bios_date}
           echo "[WMI]"; ls /sys/bus/wmi/devices/
-          echo "[nitro]"; ls /sys/devices/platform/nitro/ 2>/dev/null || true
           echo "[modules]"; lsmod | grep -E 'nitro|acer_wmi' || true
         } 2>/dev/null
         ```
@@ -72,8 +71,8 @@ body:
     id: probe-output
     attributes:
       label: "Probe Output (optional)"
-      description: "Only fill this if a maintainer has triaged your report, added a candidate probe entry, and requested probe output. Paste the block from the survey command below if you can run it"
-      placeholder: "sudo python3 tools/probe_survey.py"
+      description: "Only if a maintainer triaged your report, added a probe entry, and asked for it. Run `sudo python3 tools/probe_survey.py` and paste the block plus the exit code"
+      placeholder: "survey block + exit code"
     validations:
       required: false
 

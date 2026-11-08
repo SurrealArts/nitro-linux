@@ -74,15 +74,14 @@ On AN515-57, duty 0 does **not** stop the fans; firmware maps it to ~2k–3k RPM
 
 **Read-only only.** Do not force-load the module, patch DMI strings, or write EC/WMI registers.
 
-Run this and paste the output into a **Model support report** issue:
+Run `nitro report` and paste the full output into a **Model support report** issue. It is read-only and redacts UUIDs, MAC addresses, and long digit-only strings from DMI and sysfs output; model names stay readable and the WMI GUID list is kept (those are hardware-family identifiers). Review the output before posting. If `nitro-linux` is not installed, paste this instead:
 
 ```bash
 {
   echo "[uname]"; uname -r
   echo "[DMI]"
-  cat /sys/class/dmi/id/{sys_vendor,product_name,board_name,board_vendor,bios_version,bios_date}
+  cat /sys/class/dmi/id/{sys_vendor,product_name,bios_version,bios_date}
   echo "[WMI]"; ls /sys/bus/wmi/devices/
-  echo "[nitro]"; ls /sys/devices/platform/nitro/ 2>/dev/null || true
   echo "[modules]"; lsmod | grep -E 'nitro|acer_wmi' || true
 } 2>/dev/null
 ```
@@ -92,8 +91,6 @@ Also include:
 - Distro, kernel, whether `nitro-linux` is installed (package/source/none)
 - What you observe: fans, temperatures, backlight, profile, suspend behavior
 - **Safety acknowledgement:** you have not force-loaded or written raw registers
-
-`nitro report` automates this. It is read-only and redacts UUIDs, MAC addresses, and long digit-only strings from DMI and sysfs output; model names stay readable and the WMI GUID list is kept (those are hardware-family identifiers). Review the output before posting.
 
 ---
 
