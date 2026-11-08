@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "💬 Questions & help"
+    url: https://github.com/SurrealArts/nitro-linux/discussions/new?category=q-a
+    about: "Install, DKMS/Secure Boot, daemon, TUI, or model-support questions. Bugs belong in an issue."
+  - name: "💡 Ideas & feature requests"
+    url: https://github.com/SurrealArts/nitro-linux/discussions/new?category=ideas
+    about: "Propose a feature or change and get feedback before it becomes an issue."
+  - name: "🙌 Show and tell"
+    url: https://github.com/SurrealArts/nitro-linux/discussions/new?category=show-and-tell
+    about: "Share your TUI config, scripts, dashboard, or setup."

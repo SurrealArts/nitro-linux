@@ -11,6 +11,7 @@ Minimum terminal size: **120x45**
 - [Supported models & how to report](docs/MODELS.md)
 - [Contributing a model report](docs/CONTRIBUTING.md)
 - [Reverse-engineering notes](docs/REVERSE.md)
+- [Community discussions](https://github.com/SurrealArts/nitro-linux/discussions)
 
 ## Supported models
 
@@ -230,6 +231,10 @@ Dynamic modes are `1` breath, `2` neon, `3` wave, `4` shifting, and `5` zoom. Sp
 - `/usr/share/licenses/nitro-linux/LICENSE`: package license.
 
 </details>
+
+## Community
+
+Questions, ideas, and setups go to [Discussions](https://github.com/SurrealArts/nitro-linux/discussions). Bugs belong in a [bug report](https://github.com/SurrealArts/nitro-linux/issues/new?template=bug-report.yml) and new hardware in a [Model support report](https://github.com/SurrealArts/nitro-linux/issues/new?template=model-report.yml).
 
 ## License
 
