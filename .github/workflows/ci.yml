@@ -29,6 +29,8 @@ jobs:
             daemon/nitrod.py \
             tui/nitro-linux.py \
             tools/nitro.py \
+            tools/controls.py \
+            tools/test_controls.py \
             tools/model.py \
             tools/check_version.py \
             tools/check_models.py \
